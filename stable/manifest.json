@@ -1,29 +1,17 @@
 {
   "product": "EchoTrace by khresist",
-  "version": "0.1.1.6",
+  "version": "0.1.1.7",
   "channel": "stable",
   "ownerApproved": true,
-  "acceptedCandidate": "internal.8",
-  "acceptedSourceCommit": "e72695377b2d2851a18fccb7eaf85d8fabe938ff",
-  "acceptedInstallerSha256": "11bd195d2bdc7eb4ff4918fa5a13b6f642325a4a69f8bdee3f75ad0119137b02",
-  "acceptedEvidenceSha256": "fd5b85b1c726bceb3c2f9b5df7bde23106a88873fc286031a8234e37548f4f98",
-  "acceptedRuntimeChecks": 514,
-  "installerSha256": "1503f55ca2f6ceb4d60b06929f82c5086627263a860d138d418d3f8987fb0d60",
-  "metadataSha256": "0a2d241962a20ccc85b324e70c068f104c8891563c039536a2d0f3a6addc04a1",
+  "acceptedBaseline": "corrected 0.1.1.7-dev.4",
+  "acceptedInstallerSha256": "201bd87bf0a4f850f91b0476162b350cb12e3297d41e3999198dce7792ef8260",
+  "installerSha256": "7be98383d99c598f3ba76cd5cd4c22953b4df5e1e29fa332f35636a3ce0d8b52",
+  "metadataSha256": "5bdeeec45674ae6360ab1fa763959857f2cf58593208795f8fb63610574f87c4",
+  "normalizedRuntimeBodySha256": "90daaf1ca7c39342024c56cd738dd00c7903ea18ade099b5ba8083ab6d33c965",
   "downloadURL": "https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.user.js",
   "updateURL": "https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.meta.js",
-  "runtimeEquivalence": "byte-identical after exact BUILD channel/candidate normalization; numeric version unchanged",
-  "allowedChanges": [
-    "userscript updateURL/downloadURL",
-    "BUILD.channel: internal→stable",
-    "BUILD.candidate: internal.8→official"
-  ],
-  "automaticUpdates": "manager-dependent checks; manual initial enrollment; only future approved higher numeric versions",
-  "promotionVerification": {
-    "runtimeEquivalence": "passed",
-    "sameIdentityDataSettingsRetention": "passed isolated real IndexedDB/local IITC shell with synthetic data",
-    "managerMechanism": "passed isolated Tampermonkey5.5.1/local URLs; manually triggered check and confirmed replacement; unpublished higher-version fixture",
-    "publicVersion": "0.1.1.6",
-    "validationBoundary": "no active-profile settings changes or Codex authenticated Intel/field accuracy measurement"
-  }
+  "releaseTag": "v0.1.1.7",
+  "checks": 391,
+  "correctedColorScope": "Only interaction-position paths purple/yellow+black; created Link and arrows original RES #75c8ff/ENL #80ef98; event-line backing #102132; destroyed objects original faction",
+  "updates": "Stable116 manager-controlled higher-version update; update-disabled internals require one manual official enrollment; no immediate/silent guarantee."
 }

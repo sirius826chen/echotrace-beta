@@ -1,0 +1,79 @@
+{
+  "version": "0.1.1.7",
+  "passed": 391,
+  "failed": 0,
+  "installerSha256": "7be98383d99c598f3ba76cd5cd4c22953b4df5e1e29fa332f35636a3ce0d8b52",
+  "syntaxSourceFiles": 22,
+  "normalizedRuntimeEquivalence": "Accepted corrected dev4; only version/BUILD/release header metadata differ",
+  "validationBoundary": "Synthetic isolated Edge/IITC/Leaflet/Worker/IndexedDB; actual isolated TM5.5.1 with localhost header adapters for semantic version update, not canonical live transport. Canonical header contract and public HTTP downloads separately verified. No authenticated owner Intel/profile, field accuracy or Anomaly stress claim.",
+  "tests": [
+    {
+      "name": "dev4-state",
+      "passed": 16
+    },
+    {
+      "name": "dev4-ui",
+      "passed": 21
+    },
+    {
+      "name": "dev4-schema",
+      "passed": 6
+    },
+    {
+      "name": "dev3-display",
+      "passed": 8
+    },
+    {
+      "name": "dev3-ui",
+      "passed": 12
+    },
+    {
+      "name": "dev2-presentation",
+      "passed": 13
+    },
+    {
+      "name": "dev1",
+      "passed": 21
+    },
+    {
+      "name": "revision1168-core",
+      "passed": 61
+    },
+    {
+      "name": "revision1168-raw",
+      "passed": 18
+    },
+    {
+      "name": "revision1168-acquisition",
+      "passed": 85
+    },
+    {
+      "name": "revision1168-history",
+      "passed": 20
+    },
+    {
+      "name": "revision1168-changes",
+      "passed": 21
+    },
+    {
+      "name": "dev2-ui",
+      "passed": 16
+    },
+    {
+      "name": "revision1168-ui",
+      "passed": 18
+    },
+    {
+      "name": "revision1168-infrastructure",
+      "passed": 44
+    },
+    {
+      "name": "release-manager",
+      "passed": 4
+    },
+    {
+      "name": "release-upgrade",
+      "passed": 7
+    }
+  ]
+}

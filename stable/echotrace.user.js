@@ -2,7 +2,7 @@
 // @id             player-tracker-chatgpt@local
 // @name           EchoTrace by khresist
 // @namespace      iitc.plugin.playerTrackerChatGPT
-// @version        0.1.1.6
+// @version        0.1.1.7
 // @updateURL      https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.meta.js
 // @downloadURL    https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.user.js
 // @description    Standalone public COMM activity tracker with player views, paths, storage and CSV.
@@ -12,11 +12,11 @@
 // @match          https://intel-x.ingress.com/*
 // @grant          none
 // @run-at         document-end
-// @license        MIT (khresist code; polygon-clipping credited; artwork retains original terms)
+// @license        MIT (khresist code only; third-party notices and capture-source rights retained)
 // ==/UserScript==
 // Feature references: Nanoeskadu names 2 2.1; nhz 0.11.2.20181030.ja.nhz.0001;
 // DanielOnDiordna add-on 1.3.1 / 2.0.0; BlancLapin Advanced Tracker Player 0.0.1.
-// This is new code, not an add-on, GPS trace, or arbitrary-date history retriever.
+// This is new code, not an add-on, GPS trace, or guaranteed server history archive.
 /*
 MIT License
 
@@ -76,19 +76,19 @@ function createTrackerHistory(model){
    if(part.groups.some(g=>g.events.some(e=>(options.sourceConflicts||[]).some(c=>c.guid===e.guid)))){fail('source-conflict');continue;}
    const proof=result?.proofs?.find(p=>p.segmentId===partIndex&&p.state==='complete');if(!proof){fail(result?.progress?.pending?'pending':result?.proofs?.find(p=>p.segmentId===partIndex)?.reason||'insufficient-context',result?.progress?.pending?'pending':'unavailable');continue;}
    const observations=part.groups.filter(g=>g.anchors.length).map(g=>({time:g.time,anchors:model.collapse(g.anchors)}));
-   const stateEntry=result.cacheEntries?.find(e=>{try{return JSON.parse(e.key)[3]===partIndex;}catch(_){return false;}}),allBranches=stateEntry?.solved?.branches.filter(b=>b.stage==='complete').map(b=>({id:b.id,sourceBranches:b.sourceBranches,witness:b.witness.map((position,i)=>({position,time:proof.branches[0].witness[i].time})),minimumEligible:proof.branches.some(p=>p.id===b.id)}))||proof.branches.map(b=>({...b,minimumEligible:true}));
+   const stateEntry=result.cacheEntries?.find(e=>{try{return JSON.parse(e.key)[3]===partIndex;}catch(_){return false;}}),allBranches=stateEntry?.solved?.branches?.filter(b=>b.stage==='complete').map(b=>({id:b.id,sourceBranches:b.sourceBranches,witness:b.witness.map((position,i)=>({position,time:proof.branches[0].witness[i].time})),minimumEligible:proof.branches.some(p=>p.id===b.id)}))||proof.branches.map(b=>({...b,minimumEligible:true}));
    for(const branch of allBranches){
     const witness=branch.witness,exact=witness.findIndex(p=>p.time===t);let from=exact>=0?exact:witness.findIndex(p=>p.time>t)-1,to=exact>=0?exact:from+1;if(from<0||to>=witness.length){limits.push({scenario,branch:branch.id,reason:'unsupported-intermediate'});continue;}
-    const allSources=branch.sourceBranches.flat(),P=model.projection(allSources),groupSources=branch.sourceBranches;
-    const common=geometry.intersect(groupSources.map(anchors=>geometry.intersect(anchors.map(a=>[circle(P.project(a.position),Math.max(.001,a.radius/P.k-.003))]))));
+    const allSources=branch.sourceBranches.flat(),P=model.projection(proof.approximation?[{position:witness[from].position,radius:0}]:allSources),groupSources=branch.sourceBranches;
+    const common=proof.approximation?[]:geometry.intersect(groupSources.map(anchors=>geometry.intersect(anchors.map(a=>[circle(P.project(a.position),Math.max(.001,a.radius/P.k-.003))]))));
     const dense=observations.length>=POLICY.denseMinTimes&&observations.at(-1).time-observations[0].time<=POLICY.denseMaxDurationMs&&Math.max(0,...observations.flatMap(a=>a.anchors).flatMap(a=>observations.flatMap(b=>b.anchors).map(b=>distance(a.position,b.position))))<=POLICY.denseMaxSpanM&&common.length>0&&proof.upperM===0;
     const edgeChecks=witness.slice(1).map((p,i)=>{const mid=(p.time+witness[i].time)/2,ref=referenceAt(observations,mid),directA=observations.filter(g=>g.time<=mid).at(-1),directB=observations.find(g=>g.time>=mid);let reason=ref.state!=='valid'?ref.reason:null;if(dense&&['missing-reference','overlapping-interaction-sets'].includes(reason))reason=null;if(p.time-witness[i].time>POLICY.maxAnchorGapMs)reason='sparse-support';if(directA&&directB&&Math.max(...directA.anchors.flatMap(a=>directB.anchors.map(b=>distance(a.position,b.position))))>POLICY.maxAnchorDistanceM)reason='distant-support';if(ref.state==='valid'&&ref.kmh>POLICY.maxReferenceKmh)reason='high-speed';return {ref,reason,fromTime:witness[i].time,toTime:p.time,dtSeconds:(p.time-witness[i].time)/1000,distanceM:distance(witness[i].position,p.position)};});
-    const relevant=exact>=0?[edgeChecks[exact-1],edgeChecks[exact]].filter(Boolean):[edgeChecks[from]];let reason=!relevant.length&&!dense?'weak-support':relevant.find(e=>e.reason)?.reason;if(reason){limits.push({scenario,branch:branch.id,time:t,reason});continue;}
-    let left=from,right=to;while(left>0&&!edgeChecks[left-1].reason)left--;while(right<witness.length-1&&!edgeChecks[right].reason)right++;
+    const relevant=exact>=0?[edgeChecks[exact-1],edgeChecks[exact]].filter(Boolean):[edgeChecks[from]];let reason=!relevant.length&&!dense?'weak-support':relevant.find(e=>e.reason)?.reason;if(reason)limits.push({scenario,model:'local-average',branch:branch.id,time:t,reason});
+    let left=0,right=witness.length-1;
     const ratio=from===to?0:(t-witness[from].time)/(witness[to].time-witness[from].time),A=P.project(witness[from].position),B=P.project(witness[to].position),position=P.unproject(A.map((n,k)=>n*(1-ratio)+B[k]*ratio)),localEdges=edgeChecks.slice(left,right);
     const identity={player:options.player||plan.view.player,segment:partIndex,time:t,scenario,branch:branch.id,cutoff,lookbackHours:options.hours,dataGeneration:options.dataGeneration??0};
     for(const type of ['minimum-movement','local-average']){
-     if(type==='minimum-movement'&&!branch.minimumEligible)continue;let selectedPosition=position,selectedRoute=witness.slice(left,right+1),referenceWitness=null,set,reference=exact>=0?referenceAt(observations,t):edgeChecks[from]?.ref,assumption,why=null;
+     if(type==='minimum-movement'&&!branch.minimumEligible)continue;if(type==='local-average'&&reason){limits.push({...identity,model:type,reason});continue;}let selectedPosition=position,selectedRoute=witness.slice(left,right+1),referenceWitness=null,set,reference=exact>=0?referenceAt(observations,t):edgeChecks[from]?.ref,assumption,why=null;
      if(type==='minimum-movement'){
       const a=result.regions.find(g=>g.segmentId===partIndex&&g.branchId===branch.id&&g.time===witness[from].time),b=result.regions.find(g=>g.segmentId===partIndex&&g.branchId===branch.id&&g.time===witness[to].time);if(!a||!b){limits.push({...identity,model:type,reason:'missing-certificate'});continue;}set=from===to?a.components.map(c=>c.polygon.map(r=>r.map(P.project))):interpolateRegion(a,b,ratio,P);assumption='joint minimum-distance witness; uniform straight edge interpolation; cost-sublevel outer enclosure';
      }else{
@@ -108,7 +108,7 @@ function createTrackerHistory(model){
      }
      if(!set?.length||!set[0]?.length){limits.push({...identity,model:type,reason:'empty-conditional-region'});continue;}const size=diameter(set)*P.k;if(size>POLICY.maxRegionDiameterM)why='broad-region';if(!geometry.inside(P.project(selectedPosition),set[0]))why='witness-outside-region';
      const components=set.map((poly,id)=>({id,polygon:poly.map(r=>r.map(P.unproject))})),route=selectedRoute,key=JSON.stringify({...identity,model:type}),distances=route.slice(1).map((p,i)=>distance(p.position,route[i].position)),durationMs=(route.at(-1)?.time??t)-(route[0]?.time??t);
-     variants.push({identity:{...identity,model:type},key,model:type,scenario,branch:branch.id,time:t,state:why?'not-useful':'useful',reason:why,position:why?null:selectedPosition,components:why?[]:components,computedComponents:components,diameterM:size,route,edgeDistancesM:distances,edgeAverageKmh:distances.map((d,i)=>d*3600/(route[i+1].time-route[i].time)),distanceM:distances.reduce((a,b)=>a+b,0),durationMs,averageKmh:durationMs>0?distances.reduce((a,b)=>a+b,0)*3600/durationMs:null,wholeProof:proof,referenceWitness,reference,rawIds:proof.rawIds,assumption,interpolation:from===to?'event-time witness':'uniform straight simulated edge',regionMethod:type==='minimum-movement'?'minimum cost-sublevel endpoint interpolation outer enclosure':'conditional local reference-budget intersection',terrain:'unknown; straight edges are not verified walkable routes',nonUnique:true,policy:POLICY,geographicApproximationGapM:proof.gapM});
+     variants.push({identity:{...identity,model:type},key,model:type,scenario,branch:branch.id,time:t,state:why==='broad-region'?'coarse':why?'not-useful':'useful',reason:why,position:why&&why!=='broad-region'?null:selectedPosition,components:why?[]:components,computedComponents:components,diameterM:size,route,edgeDistancesM:distances,edgeAverageKmh:distances.map((d,i)=>d*3600/(route[i+1].time-route[i].time)),distanceM:distances.reduce((a,b)=>a+b,0),durationMs,averageKmh:durationMs>0?distances.reduce((a,b)=>a+b,0)*3600/durationMs:null,wholeProof:proof,referenceWitness,reference,rawIds:proof.rawIds,assumption,interpolation:from===to?'event-time witness':'uniform straight simulated edge',regionMethod:type==='minimum-movement'?'minimum cost-sublevel endpoint interpolation outer enclosure':'conditional local reference-budget intersection',terrain:'unknown; straight edges are not verified walkable routes',nonUnique:true,policy:POLICY,geographicApproximationGapM:proof.gapM});
     }
    }
   }
@@ -146,13 +146,31 @@ function createTrackerMinimum(geometry){
   for(;cursor<sets.length*PARAMETERS.directions;cursor++){const index=Math.floor(cursor/PARAMETERS.directions),angle=2*Math.PI*(cursor%PARAMETERS.directions)/PARAMETERS.directions,d=[Math.cos(angle),Math.sin(angle)],bound=extremum(sets,index,d,budget,solved.witness,deadline,pending);pending=null;if(bound.state==='pending')return {...solved,state:'pending',reason:'region-budget',cursor,shapes,extremumState:bound};shapes[index]=clip(shapes[index],d,bound.bound);if(!shapes[index].length)return {...solved,state:'unavailable',reason:'numeric-enclosure'};}
   return {...solved,state:'complete',regions:shapes.map(p=>[p]),regionCostToleranceM:budget-solved.upper,common:false};
  }
+ function boundedLong(groups,ctx,options,cached){
+  const deadline=Date.now()+(options.budgetMs??1200),prefix=JSON.stringify([VERSION,'bounded-feasible-prefix',options.dataGeneration??0]);
+  let old=[...cached.values()].filter(s=>s?.longPrefix===prefix&&s.groups?.length<=groups.length&&s.groups.every((g,i)=>JSON.stringify(g)===JSON.stringify(groups[i]))).sort((a,b)=>b.groups.length-a.groups.length)[0];
+  const state=old?JSON.parse(JSON.stringify(old)):{longPrefix:prefix,groups:[],witness:[],sources:[],shapes:[],reusedStates:0};state.reusedStates=state.groups.length;
+  for(let i=state.groups.length;i<groups.length;i++){
+   if(Date.now()>deadline)return {...state,pending:true};const g=groups[i];let choices=[g.anchors];for(const targets of g.attacks){if(choices.length*targets.length>PARAMETERS.maxBranches)return {...state,error:'alternative-limit'};choices=choices.flatMap(a=>targets.map(b=>a.concat(b)));}
+   let best=null;for(const anchors of choices){try{const P=ctx.projection(anchors),set=geometry.intersect(anchors.map(a=>ctx.circle(P.project(a.position),(a.radius/P.k-ctx.numericM)*Math.cos(Math.PI/ctx.sides))));if(set.length!==1||!convex(set[0]))continue;const prev=state.witness.at(-1)?.position,point=prev?project(P.project(prev),set[0]):geometry.representative(set[0]).point,position=P.unproject(point);if(!anchors.every(a=>ctx.geoDistance(position,a.position)<=a.radius+1e-6))continue;const cost=prev?ctx.geoDistance(prev,position):0,outer=geometry.intersect(anchors.map(a=>ctx.circle(P.project(a.position),a.radius*P.k+ctx.numericM)));if(!best||cost<best.cost)best={position,cost,sources:anchors.map(a=>({rawIds:a.rawIds,position:a.position,radius:a.radius,assumptions:a.assumptions||null})),components:outer.map((poly,id)=>({id,polygon:poly.map(r=>r.map(P.unproject))}))};}catch(_){}}
+   if(!best)return {...state,error:'conflicting-or-unrepresentable-local-constraints'};
+   state.groups.push(g);state.witness.push({time:g.time,position:best.position});state.sources.push(best.sources);state.shapes.push(best.components);
+  }return {...state,pending:false};
+ }
+
  function solve(plan,options,xmp,ctx){const cached=new Map((options._cache||[]).map(e=>[e.key,e.solved])),deadline=Date.now()+(options.budgetMs??1200),scenario=xmp?'minimum-XMP':'minimum-interaction',windows=[],regions=[],points=[],cacheEntries=[],proofs=[];let pending=0,limited=0,computed=0;
   const attacks=new Map();for(const choices of plan.attack.constraints){const time=choices[0].time;if(!attacks.has(time))attacks.set(time,[]);attacks.get(time).push(choices);}
   for(const [segmentId,part] of plan.parts.entries()){
-   const groups=part.groups.map(g=>({time:g.time,rawIds:g.events.map(e=>e.guid),anchors:ctx.collapse(g.anchors),attacks:xmp?attacks.get(g.time)||[]:[]})).filter(g=>g.anchors.length||g.attacks.length),rawIds=part.groups.flatMap(g=>g.events.map(e=>e.guid)),key=JSON.stringify([VERSION,PARAMETERS,scenario,segmentId,options.dataGeneration??0,part.closed,groups,options.sourceConflicts||[]]);let state=cached.get(key);
+   const groups=part.groups.map(g=>({time:g.time,rawIds:g.events.map(e=>e.guid),anchors:ctx.collapse(g.anchors),attacks:xmp?attacks.get(g.time)||[]:[]})).filter(g=>g.anchors.length||g.attacks.length),rawIds=[...new Set(part.groups.flatMap(g=>g.events.map(e=>e.guid)).concat(groups.flatMap(g=>g.anchors.concat(g.attacks.flat()).flatMap(a=>a.rawIds||[]))))],key=JSON.stringify([VERSION,PARAMETERS,scenario,segmentId,options.dataGeneration??0,part.closed,groups,options.sourceConflicts||[]]);let state=cached.get(key);
    if((options.sourceConflicts||[]).some(c=>rawIds.includes(c.guid))){limited++;proofs.push({segmentId,state:'conflict',reason:'source-conflict',rawIds,sourceConflicts:options.sourceConflicts});continue;}
-   if(!groups.length||xmp&&!groups.some(g=>g.attacks.length))continue;
-   if(groups.length>PARAMETERS.maxStates){limited++;proofs.push({segmentId,state:'limited',reason:'state-limit',rawIds});continue;}
+   if(!groups.length)continue;
+   if(groups.length>PARAMETERS.maxStates){
+    const long=boundedLong(groups,ctx,options,cached);cacheEntries.push({key,solved:long});computed+=long.groups.length-long.reusedStates;
+    if(long.error){limited++;proofs.push({segmentId,state:'limited',reason:long.error,rawIds});continue;}if(long.pending){pending++;continue;}
+    const witness=long.witness,upperM=witness.slice(1).reduce((n,p,i)=>n+ctx.geoDistance(p.position,witness[i].position),0),durationMs=witness.at(-1).time-witness[0].time,proof={version:VERSION,state:'complete',segmentId,scenario,rawIds:[...new Set(rawIds.concat(long.sources.flatMap(a=>a.flatMap(s=>s.rawIds))))],lowerM:0,upperM,distanceM:upperM,gapM:upperM,durationMs,wholeDurationMs:durationMs,wholeAverageKmh:upperM*3600/durationMs,approximation:true,optimality:'bounded sequential feasible approximation; global minimum NOT established',geographicWitnessVerified:true,sharedBoundaryVerified:true,reusedStates:long.reusedStates,branches:[{id:0,sourceBranches:long.sources,witness,lowerM:0,upperM}]};proofs.push(proof);
+    for(let i=0;i<witness.length;i++)regions.push({segmentId,branchId:0,time:witness[i].time,components:long.shapes[i],diameterM:Math.max(...groups[i].anchors.concat(groups[i].attacks.flat()).map(a=>a.radius*2)),certificate:{method:'local conditional disks; sequential feasible witness, not minimum cost-sublevel'}});
+    continue;
+   }
    if(!state){if(options._onlyCache){pending++;cacheEntries.push({key,solved:null});continue;}try{
     let choices=[[]];for(const g of groups){let at=[g.anchors];for(const targets of g.attacks){if(at.length*targets.length>PARAMETERS.maxBranches)throw Error('alternative-limit');at=at.flatMap(a=>targets.map(b=>a.concat(b)));}if(choices.length*at.length>PARAMETERS.maxBranches)throw Error('alternative-limit');choices=choices.flatMap(a=>at.map(b=>a.concat([ctx.collapse(b)])));}
     const P=ctx.projection(choices.flat(2)),branches=[];for(const [id,list] of choices.entries()){const outer=list.map(a=>geometry.intersect(a.map(q=>ctx.circle(P.project(q.position),q.radius*P.k+ctx.numericM)))),inner=list.map(a=>geometry.intersect(a.map(q=>ctx.circle(P.project(q.position),(q.radius/P.k-ctx.numericM)*Math.cos(Math.PI/ctx.sides)))));
@@ -298,6 +316,378 @@ function createTrackerActivity(core, env) {
 /* UI-only keyed catalog. No DOM text scanning and no raw-record mutation. */
 function createTrackerI18n(preference,navigator={}) {
   const catalog={
+  "backtrack_archive_capacity": {
+    "en": "Saving limit reached. Raw page remains in this page; export it before closing.",
+    "zh-TW": "保存容量已達上限；原始頁面仍留本頁，關閉前請匯出。",
+    "zh-CN": "保存容量已达上限；原始页面仍留本页，关闭前请导出。",
+    "ja": "保存上限です。元のページはこのページ内に保持されています。閉じる前にエクスポートしてください。"
+  },
+  "backtrack_archive_failed": {
+    "en": "Historical raw saving/export failed",
+    "zh-TW": "歷史原始頁面保存／匯出失敗",
+    "zh-CN": "历史原始页面保存／导出失败",
+    "ja": "過去ログの保存／エクスポート失敗"
+  },
+  "backtrack_archive_cancelled": {
+    "en": "Saving cancelled",
+    "zh-TW": "已取消保存",
+    "zh-CN": "已取消保存",
+    "ja": "保存が取り消されました"
+  },
+  "backtrack_download_raw": {
+    "en": "Download original historical pages",
+    "zh-TW": "下載歷史原始頁面",
+    "zh-CN": "下载历史原始页面",
+    "ja": "元の過去ログページをダウンロード"
+  },
+  "observed_speed": {
+    "en": "Observed interaction speed",
+    "zh-TW": "互動記錄速度",
+    "zh-CN": "互动记录速度",
+    "ja": "相互作用記録の速度"
+  },
+  "route_useful": {
+    "en": "Conditional simulation available",
+    "zh-TW": "可顯示條件模擬",
+    "zh-CN": "可显示条件模拟",
+    "ja": "条件付き推定を表示可能"
+  },
+  "route_coarse": {
+    "en": "Coarse feasible route; location not tightened",
+    "zh-TW": "可行粗略軌跡；位置尚未收斂",
+    "zh-CN": "可行粗略轨迹；位置尚未收敛",
+    "ja": "粗い実行可能な軌跡。位置は未絞込み"
+  },
+  "route_pending": {
+    "en": "Computing simulation",
+    "zh-TW": "正在計算模擬",
+    "zh-CN": "正在计算模拟",
+    "ja": "推定を計算中"
+  },
+  "route_unavailable": {
+    "en": "Simulation unavailable",
+    "zh-TW": "目前無法推論",
+    "zh-CN": "当前无法推论",
+    "ja": "推定を利用できません"
+  },
+  "route_not-useful": {
+    "en": "Location estimate not displayable",
+    "zh-TW": "位置估計暫不適合顯示",
+    "zh-CN": "位置估计暂不适合显示",
+    "ja": "位置推定は表示対象外"
+  },
+  "backtrack_reason_retry": {
+    "en": "Retry scheduled; waiting for shared backoff.",
+    "zh-TW": "已排定重試，等待共用退避結束。",
+    "zh-CN": "已安排重试，等待共享退避结束。",
+    "ja": "再試行を予約しました。共有の待機時間が終了するまで待ちます。"
+  },
+  "manual_flip": {
+    "en": "Manual ADA/JARVIS flip",
+    "zh-TW": "手動 ADA/JARVIS 翻轉",
+    "zh-CN": "手动 ADA/JARVIS 翻转",
+    "ja": "ADA/JARVIS の手動反転"
+  },
+  "backtrack_title": {
+    "en": "Historical Log backtracking",
+    "zh-TW": "歷史 Log 回溯",
+    "zh-CN": "历史 Log 回溯",
+    "ja": "過去ログの遡及取得"
+  },
+  "backtrack_start_time": {
+    "en": "Starting T → earlier",
+    "zh-TW": "起始 T → 往更早",
+    "zh-CN": "起始 T → 往更早",
+    "ja": "開始時刻 T → 過去へ"
+  },
+  "backtrack_upper_help": {
+    "en": "T is the first page query upper bound.",
+    "zh-TW": "T 是第一頁查詢上界。",
+    "zh-CN": "T 是第一页查询上界。",
+    "ja": "T は最初のページの取得上限時刻です。"
+  },
+  "backtrack_set_scope": {
+    "en": "Set T / use current map area",
+    "zh-TW": "設定 T／使用目前地圖範圍",
+    "zh-CN": "设置 T／使用当前地图范围",
+    "ja": "T を設定／現在の地図範囲を使用"
+  },
+  "backtrack_one_page": {
+    "en": "Read one page / resume",
+    "zh-TW": "讀取一頁／繼續",
+    "zh-CN": "读取一页／继续",
+    "ja": "1 ページ取得／再開"
+  },
+  "backtrack_start_auto": {
+    "en": "Start / resume automatic",
+    "zh-TW": "開始／繼續自動回溯",
+    "zh-CN": "开始／继续自动回溯",
+    "ja": "自動取得を開始／再開"
+  },
+  "backtrack_stop": {
+    "en": "Stop (keep progress)",
+    "zh-TW": "停止（保留進度）",
+    "zh-CN": "停止（保留进度）",
+    "ja": "停止（進捗を保持）"
+  },
+  "backtrack_automatic": {
+    "en": "Automatic backtracking",
+    "zh-TW": "自動回溯",
+    "zh-CN": "自动回溯",
+    "ja": "自動遡及取得"
+  },
+  "backtrack_invalid_time": {
+    "en": "Choose a valid past T.",
+    "zh-TW": "請設定有效的過去時間 T。",
+    "zh-CN": "请设置有效的过去时间 T。",
+    "ja": "有効な過去の時刻 T を指定してください。"
+  },
+  "backtrack_help": {
+    "en": "Independent of live refresh and view filters. Server availability is unknown. Set T/area explicitly to change the session. Reload pauses until you resume.",
+    "zh-TW": "與即時刷新、檢視篩選各自獨立。伺服器資料範圍未知。變更時間／範圍請按設定；重新載入後按繼續。",
+    "zh-CN": "与即时刷新、查看筛选各自独立。服务器资料范围未知。变更时间／范围请按设置；重新加载后按继续。",
+    "ja": "ライブ更新と表示フィルターから独立しています。サーバーの保存範囲は不明です。時刻・範囲の変更には設定を押してください。再読込後は再開が必要です。"
+  },
+  "backtrack_diagnostics": {
+    "en": "Query details",
+    "zh-TW": "查詢詳細資料",
+    "zh-CN": "查询详细资料",
+    "ja": "取得の詳細"
+  },
+  "backtrack_progress": {
+    "en": "{pages} pages · {returned} returned · {added} new · {duplicates} duplicate · {unparsed} unreadable/conflicting",
+    "zh-TW": "{pages} 批次 · 收到 {returned} · 新增 {added} · 重複 {duplicates} · 無法解析／衝突 {unparsed}",
+    "zh-CN": "{pages} 批次 · 收到 {returned} · 新增 {added} · 重复 {duplicates} · 无法解析／冲突 {unparsed}",
+    "ja": "{pages} ページ · 受信 {returned} · 新規 {added} · 重複 {duplicates} · 解析不可／競合 {unparsed}"
+  },
+  "backtrack_times": {
+    "en": "Start {T} → earliest {earliest} · active time {elapsed}",
+    "zh-TW": "起始 {T} → 最早 {earliest} · 擷取耗時 {elapsed}",
+    "zh-CN": "起始 {T} → 最早 {earliest} · 获取耗时 {elapsed}",
+    "ja": "開始 {T} → 最古 {earliest} · 取得時間 {elapsed}"
+  },
+  "backtrack_scope": {
+    "en": "Fixed map area captured at session setup; panning and following do not change it.",
+    "zh-TW": "使用設定時擷取的固定地圖範圍；移動地圖或跟隨玩家不會更改本次範圍。",
+    "zh-CN": "使用设置时获取的固定地图范围；移动地图或跟随玩家不会更改本次范围。",
+    "ja": "設定時の地図範囲に固定されます。地図移動・追従では変更されません。"
+  },
+  "backtrack_counts": {
+    "en": "Currently: {memory} in this page · {saved} saved · {visible} visible under current filters. These differ from cumulative fetched counts.",
+    "zh-TW": "目前：本頁 {memory} 筆 · 已保存 {saved} 筆 · 篩選後可見 {visible} 筆。這些與累計擷取數不同。",
+    "zh-CN": "当前：本页 {memory} 条 · 已保存 {saved} 条 · 筛选后可见 {visible} 条。这些与累计获取数不同。",
+    "ja": "現在：このページ {memory} 件 · 保存済み {saved} 件 · フィルター内 {visible} 件。累計取得数とは異なります。"
+  },
+  "backtrack_not_persistent": {
+    "en": "Activity saving is off. Reload restarts from T.",
+    "zh-TW": "活動保存未啟用；重新載入後會從 T 重新讀取。",
+    "zh-CN": "活动保存未启用；重新加载后从 T 重新读取。",
+    "ja": "保存は無効です。再読込後は T から再取得します。"
+  },
+  "backtrack_persistent": {
+    "en": "Activity saving is enabled. Saved counts update after storage completes.",
+    "zh-TW": "已啟用活動保存；保存筆數於寫入完成後更新。",
+    "zh-CN": "已启用活动保存；保存条数于写入完成后更新。",
+    "ja": "保存は有効です。保存件数は書込完了後に更新されます。"
+  },
+  "backtrack_view_retention": {
+    "en": "View: {hours} h. Configured pruning: {days} days (0: unlimited). Capacity limits can prevent saving; see Storage.",
+    "zh-TW": "顯示範圍：{hours} 小時。設定保留：{days} 天（0：不限）。容量限制可能使資料無法保存，請查看「儲存」。",
+    "zh-CN": "显示范围：{hours} 小时。设置保留：{days} 天（0：不限）。容量限制可能使资料无法保存，请查看「存储」。",
+    "ja": "表示：{hours} 時間。保持設定：{days} 日（0：無制限）。容量制限で保存できない場合はストレージを確認してください。"
+  },
+  "backtrack_retry": {
+    "en": "Retry/wait {n} s",
+    "zh-TW": "重試／等待 {n} 秒",
+    "zh-CN": "重试／等待 {n} 秒",
+    "ja": "再試行／待機 {n} 秒"
+  },
+  "backtrack_legend": {
+    "en": "Thick long-short dashes: conditional attack simulation; thick regular dashes: interaction records; thin dashes: simulated positions.",
+    "zh-TW": "粗長短虛線：攻擊支持條件模擬；粗等距虛線：互動記錄；細虛線：推論位置連線。",
+    "zh-CN": "粗长短虚线：攻击支持条件模拟；粗等距虚线：互动记录；细虚线：推论位置连线。",
+    "ja": "太い長短破線：攻撃に基づく条件付き推定、太い等間隔破線：相互作用記録、細い破線：推定位置。"
+  },
+  "backtrack_approximation": {
+    "en": "Bounded feasible approximation; global minimum unproven.",
+    "zh-TW": "有限處理的可行近似；未證明全域最短。",
+    "zh-CN": "有限处理的可行近似；未证明全局最短。",
+    "ja": "有界処理による実行可能な近似。大域最小は未証明です。"
+  },
+  "backtrack_quick": {
+    "en": "Minimum + XMP simulation",
+    "zh-TW": "最小移動＋XMP 模擬",
+    "zh-CN": "最小移动＋XMP 模拟",
+    "ja": "最小移動＋XMP 推定"
+  },
+  "backtrack_state_off": {
+    "en": "Off",
+    "zh-TW": "未啟動",
+    "zh-CN": "未启动",
+    "ja": "停止中"
+  },
+  "backtrack_state_queued": {
+    "en": "Queued",
+    "zh-TW": "已排隊",
+    "zh-CN": "已排队",
+    "ja": "待機列"
+  },
+  "backtrack_state_waiting": {
+    "en": "Waiting",
+    "zh-TW": "等待中",
+    "zh-CN": "等待中",
+    "ja": "待機中"
+  },
+  "backtrack_state_fetching": {
+    "en": "Fetching",
+    "zh-TW": "擷取中",
+    "zh-CN": "获取中",
+    "ja": "取得中"
+  },
+  "backtrack_state_paused": {
+    "en": "Paused",
+    "zh-TW": "已暫停",
+    "zh-CN": "已暂停",
+    "ja": "一時停止"
+  },
+  "backtrack_state_backoff": {
+    "en": "Retry wait",
+    "zh-TW": "退避等待",
+    "zh-CN": "退避等待",
+    "ja": "再試行待機"
+  },
+  "backtrack_state_ended": {
+    "en": "Ended",
+    "zh-TW": "已結束",
+    "zh-CN": "已结束",
+    "ja": "終了"
+  },
+  "backtrack_state_error": {
+    "en": "Error",
+    "zh-TW": "錯誤",
+    "zh-CN": "错误",
+    "ja": "エラー"
+  },
+  "backtrack_reason_unconfigured": {
+    "en": "Choose a starting T.",
+    "zh-TW": "請設定起始時間 T。",
+    "zh-CN": "请设置起始时间 T。",
+    "ja": "開始時刻 T を設定してください。"
+  },
+  "backtrack_reason_configured": {
+    "en": "Ready: T → earlier.",
+    "zh-TW": "已設定：從 T 往更早讀取。",
+    "zh-CN": "已设置：从 T 往更早读取。",
+    "ja": "設定済み：T から過去へ取得します。"
+  },
+  "backtrack_reason_paused": {
+    "en": "Stopped by user; progress retained.",
+    "zh-TW": "已手動停止，保留進度。",
+    "zh-CN": "已手动停止，保留进度。",
+    "ja": "手動停止。進捗を保持しています。"
+  },
+  "backtrack_reason_auto_off": {
+    "en": "Automatic backtracking off; cursor retained.",
+    "zh-TW": "自動回溯已關閉，游標保留。",
+    "zh-CN": "自动回溯已关闭，游标保留。",
+    "ja": "自動取得は無効です。継続位置を保持しています。"
+  },
+  "backtrack_reason_empty": {
+    "en": "Empty page; earlier availability and completeness unknown.",
+    "zh-TW": "回傳空頁；更早資料與完整性未知。",
+    "zh-CN": "返回空页；更早资料与完整性未知。",
+    "ja": "空のページです。過去のデータと完全性は不明です。"
+  },
+  "backtrack_reason_repeated": {
+    "en": "Repeated cursor; stopped with completeness unknown.",
+    "zh-TW": "游標重複，停止擷取；完整性未知。",
+    "zh-CN": "游标重复，停止获取；完整性未知。",
+    "ja": "継続位置が重複したため停止。完全性は不明です。"
+  },
+  "backtrack_reason_invalid": {
+    "en": "Invalid response/cursor; inspect the retained raw page.",
+    "zh-TW": "回應或游標無效，請檢查保留的原始頁面。",
+    "zh-CN": "响应或游标无效，请检查保留的原始页面。",
+    "ja": "応答または継続位置が無効です。保持した元のページを確認してください。"
+  },
+  "backtrack_reason_complete": {
+    "en": "One page finished; resume to continue.",
+    "zh-TW": "單頁完成；可按繼續。",
+    "zh-CN": "单页完成；可按继续。",
+    "ja": "1 ページ完了。再開で続行します。"
+  },
+  "backtrack_reason_next": {
+    "en": "Waiting for the next page.",
+    "zh-TW": "等待讀取下一頁。",
+    "zh-CN": "等待读取下一页。",
+    "ja": "次のページを待機中です。"
+  },
+  "backtrack_reason_queue": {
+    "en": "Waiting for the shared request scheduler.",
+    "zh-TW": "等待共用請求排程。",
+    "zh-CN": "等待共享请求排程。",
+    "ja": "共有取得スケジューラーを待機中です。"
+  },
+  "backtrack_reason_fetching": {
+    "en": "Reading a historical page.",
+    "zh-TW": "正在讀取歷史頁面。",
+    "zh-CN": "正在读取历史页面。",
+    "ja": "過去のページを取得中です。"
+  },
+  "backtrack_reason_failed": {
+    "en": "Request failed; resume after shared backoff.",
+    "zh-TW": "擷取失敗；共用退避後可繼續。",
+    "zh-CN": "获取失败；共享退避后可继续。",
+    "ja": "取得失敗。共有の再試行待機後に再開してください。"
+  },
+  "backtrack_reason_limit": {
+    "en": "1000-page resource limit reached; partial data retained.",
+    "zh-TW": "已達 1000 頁資源上限，保留部分資料。",
+    "zh-CN": "已达 1000 页资源上限，保留部分资料。",
+    "ja": "1000 ページの上限です。部分データを保持しています。"
+  },
+  "backtrack_reason_reload": {
+    "en": "Reloaded; press Resume.",
+    "zh-TW": "已重新載入，請按繼續。",
+    "zh-CN": "已重新加载，请按继续。",
+    "ja": "再読込しました。再開を押してください。"
+  },
+  "backtrack_reason_cleared": {
+    "en": "Activity cleared; restart from T.",
+    "zh-TW": "活動已清除，可從 T 重新讀取。",
+    "zh-CN": "活动已清除，可从 T 重新读取。",
+    "ja": "活動を消去しました。T から再取得できます。"
+  },
+  "backtrack_reason_loading": {
+    "en": "Loading saved activity.",
+    "zh-TW": "正在載入活動資料。",
+    "zh-CN": "正在加载活动资料。",
+    "ja": "保存した活動を読込中です。"
+  },
+  "backtrack_reason_hidden": {
+    "en": "Page hidden; waiting.",
+    "zh-TW": "頁面隱藏，等待中。",
+    "zh-CN": "页面隐藏，等待中。",
+    "ja": "ページ非表示のため待機中です。"
+  },
+  "backtrack_reason_layer": {
+    "en": "EchoTrace is off; waiting.",
+    "zh-TW": "EchoTrace 總開關已關閉，等待中。",
+    "zh-CN": "EchoTrace 总开关已关闭，等待中。",
+    "ja": "EchoTrace が無効のため待機中です。"
+  },
+  "backtrack_reason_zoom": {
+    "en": "Zoom to level 7 or higher.",
+    "zh-TW": "請放大至 7 級以上。",
+    "zh-CN": "请放大至 7 级以上。",
+    "ja": "ズームレベル 7 以上にしてください。"
+  },
+  "backtrack_reason_idle": {
+    "en": "Page idle; waiting.",
+    "zh-TW": "頁面閒置，等待中。",
+    "zh-CN": "页面闲置，等待中。",
+    "ja": "アイドル状態のため待機中です。"
+  },
   "faction_pin_controls": {
     "en": "Faction marker orientation and label",
     "zh-TW": "陣營標記方向與標籤",
@@ -357,8 +747,7 @@ function createTrackerI18n(preference,navigator={}) {
     "zh-TW": "負值＝逆時針，正值＝順時針。角度 −180…180°；標籤間距 0…20 px。只調整陣營標記，事件及推論圖釘保持原樣。",
     "zh-CN": "负值＝逆时针，正值＝顺时针。角度 −180…180°；标签间距 0…20 px。只调整阵营标记，事件及推论图钉保持原样。",
     "ja": "負の値＝反時計回り、正の値＝時計回り。角度 −180…180°、ラベル間隔 0…20 px。陣営マーカーのみ。イベントと推論ピンは変更しません。"
-  }
-,
+  },
   "direct_spatial_bound": {
     "en": "Direct event region",
     "zh-TW": "直接活動範圍",
@@ -798,16 +1187,16 @@ function createTrackerI18n(preference,navigator={}) {
     "zh-CN": "请放大至 7 级"
   },
   "refresh": {
-    "en": "Refresh",
-    "zh-TW": "刷新",
-    "ja": "更新",
-    "zh-CN": "刷新"
+    "en": "Acquire latest Log",
+    "zh-TW": "擷取最新 Log",
+    "zh-CN": "获取最新 Log",
+    "ja": "最新ログを取得"
   },
   "auto_refresh": {
-    "en": "Auto refresh",
-    "zh-TW": "自動刷新",
-    "ja": "自動更新",
-    "zh-CN": "自动刷新"
+    "en": "Automatic live acquisition",
+    "zh-TW": "即時自動擷取",
+    "zh-CN": "即时自动获取",
+    "ja": "ライブ自動取得"
   },
   "initial_interval": {
     "en": "Initial interval",
@@ -1314,10 +1703,10 @@ function createTrackerI18n(preference,navigator={}) {
     "zh-CN": "未宣告；保留原始毫秒"
   },
   "more_records": {
-    "en": "More records",
-    "zh-TW": "更多紀錄",
-    "ja": "さらに記録を表示",
-    "zh-CN": "更多纪录"
+    "en": "Show more records",
+    "zh-TW": "顯示更多紀錄",
+    "zh-CN": "显示更多记录",
+    "ja": "記録をさらに表示"
   },
   "player_names": {
     "en": "Player names",
@@ -2845,13 +3234,13 @@ function createTrackerI18n(preference,navigator={}) {
   },
   "historical_positions": {
     "en": "Historical inference: possible positions (experimental)",
-    "zh-TW": "歷史推論:可能位置(實驗)",
+    "zh-TW": "歷史推論:位置(實驗)",
     "zh-CN": "历史推论:可能位置(实验)",
     "ja": "履歴推論:位置候補(実験)"
   },
   "historical_regions": {
     "en": "Historical inference: possible regions (experimental)",
-    "zh-TW": "歷史推論:可能區域(實驗)",
+    "zh-TW": "歷史推論:區域(實驗)",
     "zh-CN": "历史推论:可能区域(实验)",
     "ja": "履歴推論:候補領域(実験)"
   },
@@ -2893,9 +3282,9 @@ function createTrackerI18n(preference,navigator={}) {
   },
   "historical_inference_off": {
     "en": "Historical inference display is off",
-    "zh-TW": "歷史推論顯示已關閉",
-    "zh-CN": "历史推论显示已关闭",
-    "ja": "履歴推論の表示はオフ"
+    "zh-TW": "歷史推論顯示未啟用",
+    "zh-CN": "历史推论显示未启用",
+    "ja": "過去位置推定の表示は無効です"
   },
   "attack_range_simulation": {
     "en": "Attack range simulation",
@@ -3058,6 +3447,294 @@ function createTrackerI18n(preference,navigator={}) {
     "zh-TW": "讀取最新頁後續接歷史；游標已保留",
     "zh-CN": "读取最新页后续接历史；游标已保留",
     "ja": "最新ページ後に履歴再開。カーソル保持"
+  },
+  "nav_overview": {
+    "en": "Player overview",
+    "zh-TW": "玩家總覽",
+    "zh-CN": "玩家总览",
+    "ja": "プレイヤー一覧"
+  },
+  "nav_acquisition": {
+    "en": "Record acquisition",
+    "zh-TW": "紀錄擷取",
+    "zh-CN": "记录获取",
+    "ja": "記録取得"
+  },
+  "nav_map": {
+    "en": "Map display",
+    "zh-TW": "地圖顯示",
+    "zh-CN": "地图显示",
+    "ja": "地図表示"
+  },
+  "nav_data": {
+    "en": "Data management",
+    "zh-TW": "資料管理",
+    "zh-CN": "数据管理",
+    "ja": "データ管理"
+  },
+  "nav_settings": {
+    "en": "Settings",
+    "zh-TW": "設定",
+    "zh-CN": "设置",
+    "ja": "設定"
+  },
+  "nav_live": {
+    "en": "Live acquisition",
+    "zh-TW": "即時擷取",
+    "zh-CN": "即时获取",
+    "ja": "ライブ取得"
+  },
+  "nav_history": {
+    "en": "Historical backtracking",
+    "zh-TW": "歷史回溯",
+    "zh-CN": "历史回溯",
+    "ja": "過去ログ取得"
+  },
+  "nav_storage": {
+    "en": "Saving and cleanup",
+    "zh-TW": "保存與清理",
+    "zh-CN": "保存与清理",
+    "ja": "保存と整理"
+  },
+  "nav_export": {
+    "en": "Export and backup",
+    "zh-TW": "匯出與備份",
+    "zh-CN": "导出与备份",
+    "ja": "エクスポートとバックアップ"
+  },
+  "nav_preferences": {
+    "en": "Preferences",
+    "zh-TW": "一般設定",
+    "zh-CN": "一般设置",
+    "ja": "基本設定"
+  },
+  "nav_shared_inference": {
+    "en": "Shared inference (experimental)",
+    "zh-TW": "共用推論設定（實驗）",
+    "zh-CN": "共用推论设置（实验）",
+    "ja": "共通推定設定（実験）"
+  },
+  "overview_details": {
+    "en": "Charts and legend",
+    "zh-TW": "完整統計與圖例",
+    "zh-CN": "完整统计与图例",
+    "ja": "統計と凡例"
+  },
+  "advanced_requests": {
+    "en": "Advanced request settings and diagnostics",
+    "zh-TW": "進階請求設定與診斷",
+    "zh-CN": "高级请求设置与诊断",
+    "ja": "高度な取得設定と診断"
+  },
+  "global_time_scope": {
+    "en": "Global lookback and observation cutoff; distinct from history T and retention.",
+    "zh-TW": "共用回看與觀測截止時間；不同於歷史起始 T 及保存期限。",
+    "zh-CN": "共用回看与观测截止时间；不同于历史起始 T 及保存期限。",
+    "ja": "共通の表示期間と観測上限です。取得開始 T や保存期間とは異なります。"
+  },
+  "shared_inference_scope": {
+    "en": "Shared model settings affect ALL players. Inspection time and branch are player-specific.",
+    "zh-TW": "共用模型設定影響所有玩家；推論顯示時刻與分支屬當前玩家。",
+    "zh-CN": "共用模型设置影响所有玩家；推论显示时刻与分支属于当前玩家。",
+    "ja": "モデル設定は全プレイヤー共通です。表示時刻と分岐はプレイヤー固有です。"
+  },
+  "adjust_shared_inference": {
+    "en": "Adjust shared inference settings",
+    "zh-TW": "調整共用推論設定",
+    "zh-CN": "调整共用推论设置",
+    "ja": "共通推定設定を開く"
+  },
+  "apply_shared_xmp": {
+    "en": "Apply minimum + XMP to ALL players",
+    "zh-TW": "套用共用最小移動＋XMP（所有玩家）",
+    "zh-CN": "应用共用最小移动＋XMP（所有玩家）",
+    "ja": "全プレイヤーに最小移動＋XMP を適用"
+  },
+  "lookback_more_global": {
+    "en": "Query 1 hour earlier (global lookback)",
+    "zh-TW": "再往前查 1 小時（共用回看）",
+    "zh-CN": "再往前查 1 小时（共用回看）",
+    "ja": "さらに1時間前を取得（共通期間）"
+  },
+  "more_portal_events": {
+    "en": "Show more events",
+    "zh-TW": "顯示更多事件",
+    "zh-CN": "显示更多事件",
+    "ja": "イベントをさらに表示"
+  },
+  "destroyed_links": {
+    "en": "Destroyed Links",
+    "zh-TW": "被破壞 Link",
+    "zh-CN": "被破坏 Link",
+    "ja": "破壊された Link"
+  },
+  "link_distance_unknown": {
+    "en": "Distance unavailable",
+    "zh-TW": "距離不明",
+    "zh-CN": "距离不明",
+    "ja": "距離不明"
+  },
+  "flip_summary": {
+    "en": "Flip",
+    "zh-TW": "翻轉",
+    "zh-CN": "翻转",
+    "ja": "反転"
+  },
+  "raw_display_count": {
+    "en": "{raw} raw records · {display} displayed rows",
+    "zh-TW": "原始 {raw} 筆 · 顯示 {display} 列",
+    "zh-CN": "原始 {raw} 条 · 显示 {display} 行",
+    "ja": "元記録 {raw} 件 · 表示 {display} 行"
+  },
+  "other_count": {
+    "en": "Other {n}",
+    "zh-TW": "其他 {n}",
+    "zh-CN": "其他 {n}",
+    "ja": "その他 {n}"
+  },
+  "nav_open_page": {
+    "en": "Reopen a function page",
+    "zh-TW": "開啟已關閉的功能",
+    "zh-CN": "打开已关闭的功能",
+    "ja": "閉じた機能ページを開く"
+  },
+  "live_diagnostics": {
+    "en": "Request details",
+    "zh-TW": "請求詳細資料",
+    "zh-CN": "请求详细资料",
+    "ja": "取得の詳細"
+  },
+  "group_members": {
+    "en": "Opened group membership",
+    "zh-TW": "開啟時的群組成員",
+    "zh-CN": "打开时的群组成员",
+    "ja": "開いたグループのメンバー"
+  },
+  "visible_members": {
+    "en": "Currently visible members",
+    "zh-TW": "目前可見成員",
+    "zh-CN": "当前可见成员",
+    "ja": "現在表示中のメンバー"
+  },
+  "flip_system_evidence": {
+    "en": "Confirmed same-time system cascade: distinct Links and CF at the same Portal. Human operator and manual/autonomous mechanism are unknown.",
+    "zh-TW": "已確認同時、同系統來源、同 Portal 的不同 Link 與 CF 連鎖；人類操作者及手動／自主機制仍未確認。",
+    "zh-CN": "已确认同时、同系统来源、同 Portal 的不同 Link 与 CF 连锁；人类操作者及手动／自主机制仍未确认。",
+    "ja": "同じ時刻・システム・Portal の異なる Link と CF の連鎖を確認しました。人間の操作者と手動／自動の区別は不明です。"
+  },
+  "flip_manual_evidence": {
+    "en": "Explicit human item-use record; expand for every corroborating source.",
+    "zh-TW": "有明確人類道具使用紀錄；可展開核對所有佐證來源。",
+    "zh-CN": "有明确人类道具使用记录；可展开核对所有佐证来源。",
+    "ja": "人間によるアイテム使用記録があります。展開して全ての根拠を確認できます。"
+  },
+  "historical_inference_group": {
+    "en": "Historical inference (experimental)",
+    "zh-TW": "歷史推論（實驗）",
+    "zh-CN": "历史推论（实验）",
+    "ja": "過去位置推定（実験）"
+  },
+  "inferred_connections": {
+    "en": "Historical inference: connections (experimental)",
+    "zh-TW": "歷史推論:連線(實驗)",
+    "zh-CN": "历史推论:连线(实验)",
+    "ja": "過去位置推定：接続（実験）"
+  },
+  "player_speed_title": {
+    "en": "Interaction displacement speed estimate",
+    "zh-TW": "互動位移速度估算",
+    "zh-CN": "互动位移速度估算",
+    "ja": "相互作用間の移動速度推定"
+  },
+  "required_speed": {
+    "en": "Required-displacement lower bound ≥{speed} km/h · minimum required distance {distance} m",
+    "zh-TW": "必要位移速度下限 ≥{speed} km/h · 所需最短位移 {distance} m",
+    "zh-CN": "必要位移速度下限 ≥{speed} km/h · 所需最短位移 {distance} m",
+    "ja": "必要移動速度の下限 ≥{speed} km/h · 最低必要距離 {distance} m"
+  },
+  "center_speed": {
+    "en": "Portal-center reference {speed} km/h · center distance {distance} m",
+    "zh-TW": "Portal 中心參考速度 {speed} km/h · 中心距離 {distance} m",
+    "zh-CN": "Portal 中心参考速度 {speed} km/h · 中心距离 {distance} m",
+    "ja": "Portal 中心の参考速度 {speed} km/h · 中心間距離 {distance} m"
+  },
+  "witness_speed": {
+    "en": "Validated-region representative reference {speed} km/h · reference distance {distance} m",
+    "zh-TW": "已驗證互動區域代表點參考 {speed} km/h · 參考距離 {distance} m",
+    "zh-CN": "已验证互动区域代表点参考 {speed} km/h · 参考距离 {distance} m",
+    "ja": "検証済み領域の代表点参考値 {speed} km/h · 参考距離 {distance} m"
+  },
+  "speed_category": {
+    "en": "Existing speed category: ",
+    "zh-TW": "既有速度分類：",
+    "zh-CN": "既有速度分类：",
+    "ja": "既存の速度分類："
+  },
+  "speed_insufficient": {
+    "en": "Insufficient/unresolved interaction data; speed unavailable",
+    "zh-TW": "互動資料不足／未解，無法估算速度",
+    "zh-CN": "互动资料不足／未解，无法估算速度",
+    "ja": "相互作用データ不足／未解決のため速度を推定できません"
+  },
+  "speed_zero_warning": {
+    "en": "Same-Portal/overlapping areas do not verify stationary presence or zero actual speed.",
+    "zh-TW": "同 Portal／互動區域重疊不代表已證實靜止或實際速度為零。",
+    "zh-CN": "同 Portal／互动区域重叠不代表已证实静止或实际速度为零。",
+    "ja": "同じ Portal や領域の重複は静止や実速度ゼロの証明ではありません。"
+  },
+  "speed_summary_help": {
+    "en": "Interval averages from existing40m endpoint assumptions; not instantaneous speed, GPS or verified travel mode.",
+    "zh-TW": "以上為原40m端點假設的區間位移參考，不是瞬時速度、GPS或已確認的交通方式。",
+    "zh-CN": "以上为原40m端点假设的区间位移参考，不是瞬时速度、GPS或已确认的交通方式。",
+    "ja": "既存の40m端点仮定による区間参考値です。瞬間速度・GPS・確認済み移動手段ではありません。"
+  },
+  "portal_totals": {
+    "en": "{players} unique RES/ENL players · {raw} raw events · {display} folded rows · {system} system records",
+    "zh-TW": "{players} 位不同一般玩家 · 原始事件 {raw} · 合併後 {display} 列 · 系統紀錄 {system}",
+    "zh-CN": "{players} 位不同一般玩家 · 原始事件 {raw} · 合并后 {display} 行 · 系统记录 {system}",
+    "ja": "RES/ENL の個別プレイヤー {players} 人 · 元イベント {raw} 件 · 集約後 {display} 行 · システム記録 {system} 件"
+  },
+  "portal_loaded_scope": {
+    "en": "Loaded records only; active player/faction scope, systems separate; lookback {hours} h. Not complete server history.",
+    "zh-TW": "僅已載入資料；目前玩家／陣營篩選，系統另列；回看 {hours} 小時，非完整伺服器歷史。",
+    "zh-CN": "仅已加载资料；当前玩家／阵营筛选，系统另列；回看 {hours} 小时，非完整服务器历史。",
+    "ja": "読込済み・現在のプレイヤー／陣営範囲のみ（システム別）。過去 {hours} 時間。サーバー全履歴ではありません。"
+  },
+  "portal_link_roles": {
+    "en": "Created Link roles: outgoing {outgoing} · incoming {incoming} · unresolved {undirected}",
+    "zh-TW": "建立 Link 關聯：發起 {outgoing} · 接收 {incoming} · 方向未定 {undirected}",
+    "zh-CN": "建立 Link 关联：发起 {outgoing} · 接收 {incoming} · 方向未定 {undirected}",
+    "ja": "作成 Link の関係：発信 {outgoing} · 受信 {incoming} · 方向不明 {undirected}"
+  },
+  "portal_stat_details": {
+    "en": "Distinct accounts and record counts",
+    "zh-TW": "不同帳號與紀錄筆數",
+    "zh-CN": "不同帐号与记录条数",
+    "ja": "個別アカウントと記録件数"
+  },
+  "portal_relation_incoming": {
+    "en": "Incoming destination association; not a direct interaction at this Portal.",
+    "zh-TW": "接收端關聯；不代表玩家在此 Portal 直接互動。",
+    "zh-CN": "接收端关联；不代表玩家在此 Portal 直接互动。",
+    "ja": "受信先としての関係です。この Portal での直接操作を示しません。"
+  },
+  "portal_relation_outgoing": {
+    "en": "Created Link origin interaction",
+    "zh-TW": "建立 Link 的發起端互動",
+    "zh-CN": "建立 Link 的发起端互动",
+    "ja": "作成 Link の発信元操作"
+  },
+  "portal_relation_undirected": {
+    "en": "Related Link; origin unresolved",
+    "zh-TW": "相關 Link，發起端未確定",
+    "zh-CN": "相关 Link，发起端未确定",
+    "ja": "関連 Link（発信元未確定）"
+  },
+  "portal_raw_categories": {
+    "en": "Raw event categories: ",
+    "zh-TW": "原始事件分類：",
+    "zh-CN": "原始事件分类：",
+    "ja": "元イベント分類："
   }
 };
   Object.assign(catalog,{progress_quiet:{en:'No new events','zh-TW':'無新事件','zh-CN':'无新事件',ja:'新イベントなし'},progress_advancing:{en:'Cursor advancing','zh-TW':'游標前進','zh-CN':'游标前进',ja:'カーソル進行'},progress_short:{en:'Short page received','zh-TW':'已取得短頁','zh-CN':'已取得短页',ja:'少件数のページ受信'},progress_complete:{en:'Catch-up completed','zh-TW':'追趕完成','zh-CN':'追赶完成',ja:'追跡取得完了'}});
@@ -3214,12 +3891,7 @@ function createTrackerI18n(preference,navigator={}) {
     "zh-CN": "互动位置连线",
     "ja": "操作地点の接続"
   },
-  "inferred_connections": {
-    "en": "Inferred position connections",
-    "zh-TW": "推論位置連線",
-    "zh-CN": "推论位置连线",
-    "ja": "推論位置の接続"
-  },
+  "inferred_connections": {"en": "Historical inference: connections (experimental)", "zh-TW": "歷史推論:連線(實驗)", "zh-CN": "历史推论:连线(实验)", "ja": "過去位置推定：接続（実験）"},
   "inference_tab": {
     "en": "Inference",
     "zh-TW": "推論",
@@ -3579,6 +4251,8 @@ function createTrackerI18n(preference,navigator={}) {
   Object.assign(catalog,{"historical_reason_worker-unavailable": {"en": "Worker unavailable; no position fallback", "zh-TW": "運算不可用，不回退為 Portal 位置", "zh-CN": "运算不可用，不回退为 Portal 位置", "ja": "計算不可。ポータル位置への代替なし"}, "historical_reason_no-input": {"en": "No eligible source records", "zh-TW": "沒有合格來源紀錄", "zh-CN": "没有合格来源记录", "ja": "有効な元記録なし"}, "scenario_availability": {"en": "Interaction baseline: {base} · attack assumption: {xmp}", "zh-TW": "互動基線：{base} · 攻擊假設：{xmp}", "zh-CN": "互动基线：{base} · 攻击假设：{xmp}", "ja": "操作基準: {base} · 攻撃仮定: {xmp}"}});
   Object.assign(catalog,{"historical_inspection_help": {"en": "Choose a time in the player Inference tab; overview/activity stay compact", "zh-TW": "在玩家「推論」頁選擇時刻；總覽與活動頁保持精簡", "zh-CN": "在玩家「推论」页选择时刻；总览与活动页保持精简", "ja": "プレイヤーの推論タブで時刻を選択。概要／活動は簡潔に表示"}, "region_extent": {"en": "Region diameter about {d}m · {n} components", "zh-TW": "區域直徑約 {d} m · {n} 個部分", "zh-CN": "区域直径约 {d} m · {n} 个部分", "ja": "領域直径 約 {d} m · {n} 成分"}});
   Object.assign(catalog,{"reference_witness_help": {"en": "A jointly feasible reference-budget witness; no minimum-distance claim", "zh-TW": "符合局部參考預算的聯合可行見證，不宣稱最小距離", "zh-CN": "符合局部参考预算的联合可行见证，不宣称最小距离", "ja": "局所参照予算で同時に実行可能な経路。最小距離の主張なし"}, "historical_reason_pending-reference-witness": {"en": "Reference witness calculation pending", "zh-TW": "參考見證計算中", "zh-CN": "参考见证计算中", "ja": "参照経路を計算中"}, "historical_reason_reference-feasibility-limit": {"en": "Reference feasibility budget exhausted", "zh-TW": "參考可行性計算達限", "zh-CN": "参考可行性计算达限", "ja": "参照実行可能性の計算上限"}, "historical_reason_reference-geographic-witness-unavailable": {"en": "Geographic reference witness not verified", "zh-TW": "地理參考見證未通過核對", "zh-CN": "地理参考见证未通过核对", "ja": "地理参照経路が未検証"}});
+  Object.assign(catalog,{"nav_acquisition": {"en": "Activity records", "zh-TW": "活動紀錄", "zh-CN": "活动记录", "ja": "活動記録"}, "nav_download": {"en": "Record download", "zh-TW": "紀錄下載", "zh-CN": "记录下载", "ja": "記録ダウンロード"}, "nav_live": {"en": "Live acquisition", "zh-TW": "即時擷取", "zh-CN": "即时获取", "ja": "リアルタイム取得"}, "nav_history": {"en": "Historical backtracking", "zh-TW": "歷史回溯", "zh-CN": "历史回溯", "ja": "履歴の遡及"}, "link_object_endpoints": {"en": "Object endpoints; no player direction", "zh-TW": "物件兩端；非玩家互動方向", "zh-CN": "物件两端；非玩家互动方向", "ja": "オブジェクト両端。プレイヤーの操作方向ではありません"}, "link_direction_unknown": {"en": "Direction unknown", "zh-TW": "方向不明", "zh-CN": "方向不明", "ja": "方向不明"}, "focus_master_off": {"en": "EchoTrace is off; Link focus unavailable", "zh-TW": "EchoTrace 總開關關閉，無法高亮 Link", "zh-CN": "EchoTrace 总开关关闭，无法高亮 Link", "ja": "EchoTrace がオフのため強調不可"}, "focus_geometry_unknown": {"en": "Link geometry unavailable; no guessed endpoints", "zh-TW": "Link 幾何不可用，不猜端點", "zh-CN": "Link 几何不可用，不猜端点", "ja": "Link の形状不明。端点を推測しません"}, "map_interval": {"en": "Current map time interval", "zh-TW": "目前地圖時間範圍", "zh-CN": "目前地图时间范围", "ja": "現在の地図の時間範囲"}, "map_interval_empty": {"en": "No acquired records in the current interval", "zh-TW": "目前範圍尚無已取得紀錄", "zh-CN": "目前范围尚无已取得记录", "ja": "現在の範囲に取得済み記録はありません"}, "map_history_help": {"en": "Read earlier records in the current area. Request bounds are separate from loaded evidence; map interval is at most 24 hours.", "zh-TW": "讀取目前區域較早紀錄；請求邊界不等於已取得證據。地圖區間最多 24 小時。", "zh-CN": "读取目前区域较早记录；请求边界不等于已取得证据。地图区间最多 24 小时。", "ja": "現在の領域の過去の記録を取得。要求境界と取得済み証拠は別です。地図範囲は最大24時間。"}, "map_24h_limit": {"en": "Map interval limit: 24 hours", "zh-TW": "地圖回看上限：24 小時", "zh-CN": "地图回看上限：24 小时", "ja": "地図の範囲上限：24時間"}, "map_hours_migrated": {"en": "Saved lookback exceeded 24 hours and was reduced to 24; stored RAW was retained.", "zh-TW": "原回看設定超過 24 小時，已調整為 24 小時；較早 RAW 仍保留。", "zh-CN": "原回看设定超过 24 小时，已调整为 24 小时；较早 RAW 仍保留。", "ja": "保存された範囲を24時間に調整しました。古いRAWは保持されています。"}, "history_live_paused": {"en": "Historical backtracking: live acquisition paused, upper observation endpoint frozen. Live choice is restored on exit.", "zh-TW": "歷史回溯中：即時擷取已暫停，觀測右端固定；結束後恢復原選擇。", "zh-CN": "历史回溯中：即时获取已暂停，观测右端固定；结束后恢复原选择。", "ja": "履歴取得中：ライブ取得を停止し右端を固定。終了後に元の設定へ復帰。"}, "history_reload_restored": {"en": "Reload: history task paused; previous live choice restored. Resume manually.", "zh-TW": "已重整：歷史任務暫停，原即時選擇已恢復；請手動繼續。", "zh-CN": "已重整：历史任务暂停，原即时选择已恢复；请手动继续。", "ja": "再読込：履歴タスクは停止、ライブ設定は復元。手動で再開してください。"}, "history_elapsed": {"en": "Elapsed {elapsed}", "zh-TW": "已執行 {elapsed}", "zh-CN": "已执行 {elapsed}", "ja": "経過 {elapsed}"}, "backtrack_reason_24h": {"en": "24-hour map boundary reached; older RAW retained", "zh-TW": "已達地圖 24 小時邊界，較早 RAW 仍保留", "zh-CN": "已达地图 24 小时边界，较早 RAW 仍保留", "ja": "地図の24時間境界に到達。古いRAWは保持"}, "backtrack_reason_area": {"en": "Area changed; task paused", "zh-TW": "區域已變更，任務暫停", "zh-CN": "区域已变更，任务暂停", "ja": "領域変更により停止"}, "backtrack_reason_task": {"en": "Switched to archive download", "zh-TW": "已切換至封存下載", "zh-CN": "已切换至封存下载", "ja": "アーカイブ取得へ切替"}, "capture_scope_help": {"en": "Download period · Public all only. A separate archival task with frozen map bounds. Periods over 24 hours do not expand the map or automatically insert downloaded records.", "zh-TW": "下載期間 · 僅公開 all。此為獨立封存任務，範圍於啟動時固定；超過 24 小時不會擴大地圖或自動插入下載紀錄。", "zh-CN": "下载期间 · 仅公开 all。此为独立封存任务，范围于启动时固定；超过 24 小时不会扩大地图或自动插入下载记录。", "ja": "ダウンロード期間 · 公開allのみ。固定領域の独立アーカイブ。24時間超でも地図範囲を拡大せず自動挿入しません。"}, "capture_start": {"en": "Download period: start", "zh-TW": "下載期間：開始", "zh-CN": "下载期间：开始", "ja": "ダウンロード開始"}, "capture_end": {"en": "Download period: end", "zh-TW": "下載期間：結束", "zh-CN": "下载期间：结束", "ja": "ダウンロード終了"}, "capture_delay": {"en": "Request delay (ms, minimum 800)", "zh-TW": "請求間隔（ms，最少 800）", "zh-CN": "请求间隔（ms，最少 800）", "ja": "要求間隔（ms、最小800）"}, "capture_limit": {"en": "Maximum pages (1–500)", "zh-TW": "頁數上限（1–500）", "zh-CN": "页数上限（1–500）", "ja": "最大ページ数（1–500）"}, "capture_start_button": {"en": "Start archive capture", "zh-TW": "開始封存擷取", "zh-CN": "开始封存获取", "ja": "アーカイブ取得開始"}, "capture_cancel": {"en": "Cancel capture", "zh-TW": "取消擷取", "zh-CN": "取消获取", "ja": "取得を中止"}, "capture_download": {"en": "Download RAW log", "zh-TW": "下載 RAW log", "zh-CN": "下载 RAW log", "ja": "RAW logをダウンロード"}, "capture_invalid": {"en": "Invalid download period/options; delay >=800ms, pages 1–500.", "zh-TW": "下載期間或選項無效；間隔至少 800ms，頁數 1–500。", "zh-CN": "下载期间或选项无效；间隔至少 800ms，页数 1–500。", "ja": "期間または設定が無効。間隔800ms以上、1–500ページ。"}, "capture_pages": {"en": "Pages/attempts: {n}", "zh-TW": "頁面／嘗試：{n}", "zh-CN": "页面／尝试：{n}", "ja": "ページ／試行：{n}"}, "capture_duplicates": {"en": "Duplicate occurrences: {n}", "zh-TW": "重複筆數：{n}", "zh-CN": "重复笔数：{n}", "ja": "重複件数：{n}"}, "capture_provenance": {"en": "Adapted from COMM Capture 0.1.0-dev.2 preview. Full responses, duplicates and unknown fields remain in RAW. Cancelled/partial output is downloadable; completion describes the request, not complete server history. Uses shared pacing/backoff.", "zh-TW": "移植自 COMM Capture 0.1.0-dev.2 開發預覽。RAW 保留完整回應、重複及未知欄位；取消／部分結果仍可下載。完成僅指請求條件，不保證伺服器歷史完整；沿用共用排程與退避。", "zh-CN": "移植自 COMM Capture 0.1.0-dev.2 开发预览。RAW 保留完整响应、重复及未知字段；取消／部分结果仍可下载。完成仅指请求条件，不保证服务器历史完整；沿用共用排程与退避。", "ja": "COMM Capture開発版から移植。完全な応答、重複、未知フィールドを保持。中止／部分結果も保存可能。完了はサーバー履歴の完全性を保証しません。共通調整とバックオフを使用。"}, "capture_state_idle": {"en": "Ready", "zh-TW": "待命", "zh-CN": "待命", "ja": "準備完了"}, "capture_state_running": {"en": "Capturing", "zh-TW": "擷取中", "zh-CN": "获取中", "ja": "取得中"}, "capture_state_complete": {"en": "Requested boundary reached", "zh-TW": "已達請求邊界", "zh-CN": "已达请求边界", "ja": "要求境界に到達"}, "capture_state_partial": {"en": "Partial", "zh-TW": "部分完成", "zh-CN": "部分完成", "ja": "部分完了"}, "capture_state_cancelled": {"en": "Cancelled; partial output retained", "zh-TW": "已取消，保留部分結果", "zh-CN": "已取消，保留部分结果", "ja": "中止。部分結果を保持"}, "capture_state_failed": {"en": "Failed; available RAW retained", "zh-TW": "失敗，保留已取得 RAW", "zh-CN": "失败，保留已取得 RAW", "ja": "失敗。取得済みRAWを保持"}});
+  Object.assign(catalog,{"capture_reason_reached-start-time": {"en": "Requested start reached", "zh-TW": "已讀至下載期間起點", "zh-CN": "已读至下载期间起点", "ja": "指定開始時刻に到達"}, "capture_reason_empty-result": {"en": "Server returned no earlier rows", "zh-TW": "伺服器未回傳更早紀錄", "zh-CN": "服务器未返回更早记录", "ja": "以前の記録が返されませんでした"}, "capture_reason_retry": {"en": "Retrying under shared backoff", "zh-TW": "依共用退避重試", "zh-CN": "依共用退避重试", "ja": "共通バックオフで再試行"}, "capture_reason_request-error": {"en": "Request failed", "zh-TW": "請求失敗", "zh-CN": "请求失败", "ja": "要求失敗"}, "capture_reason_invalid-response": {"en": "Unrecognized response; RAW retained", "zh-TW": "回應格式無法辨識，RAW 保留", "zh-CN": "响应格式无法识别，RAW 保留", "ja": "応答形式を認識不可。RAWを保持"}, "capture_reason_invalid-page-cursor": {"en": "Invalid continuation; stopped safely", "zh-TW": "續讀游標無效，已安全停止", "zh-CN": "续读游标无效，已安全停止", "ja": "継続情報が無効。安全に停止"}, "capture_reason_repeated-page-cursor": {"en": "Repeated continuation; stopped", "zh-TW": "續讀游標重複，已停止", "zh-CN": "续读游标重复，已停止", "ja": "継続情報の重複により停止"}, "capture_reason_max-pages-reached": {"en": "Page limit reached", "zh-TW": "已達頁數上限", "zh-CN": "已达页数上限", "ja": "ページ上限に到達"}, "capture_reason_user-cancelled": {"en": "Cancelled by user", "zh-TW": "使用者取消", "zh-CN": "用户取消", "ja": "ユーザーが中止"}, "capture_reason_task-switch": {"en": "Switched task", "zh-TW": "已切換任務", "zh-CN": "已切换任务", "ja": "タスク切替"}, "capture_reason_cleared": {"en": "Data cleared", "zh-TW": "資料已清除", "zh-CN": "数据已清除", "ja": "データを消去"}, "capture_reason_master-off": {"en": "EchoTrace turned off", "zh-TW": "EchoTrace 已關閉", "zh-CN": "EchoTrace 已关闭", "ja": "EchoTraceをオフ"}, "capture_reason_disposed": {"en": "Page closed", "zh-TW": "頁面已關閉", "zh-CN": "页面已关闭", "ja": "ページ終了"}, "capture_reason_unexpected-error": {"en": "Unexpected failure; partial RAW retained", "zh-TW": "發生錯誤，保留部分 RAW", "zh-CN": "发生错误，保留部分 RAW", "ja": "エラー。部分RAWを保持"}});
   const locales=['en','zh-TW','zh-CN','ja'];
   function resolve(tags=navigator.languages?.length?navigator.languages:[navigator.language]){
     for(const raw of tags||[]){const tag=String(raw||'').replaceAll('_','-').toLowerCase();
@@ -3628,7 +4302,7 @@ function createTrackerCoordination(env={}) {
     if(m.type==='native'&&Number.isFinite(m.until)&&m.until<=now()+UNCERTAINTY+5000){if(m.until>now())peers.set(m.sender,m.until);else peers.delete(m.sender);return;}
     if(m.type==='native-failure'&&typeof m.requestId==='string'&&m.requestId.length<=128&&Number.isSafeInteger(m.error?.status)&&Number.isFinite(m.error?.retryAfterMs)){nativeErrors.set(m.requestId,m.error);return;}
     if((m.type==='result'||m.type==='native-result')&&typeof m.key==='string'&&m.key.length<20000&&params(m.params)&&Number.isSafeInteger(m.generation)){
-      if(m.data&&(!Array.isArray(m.data.result)||m.data.result.length>50||m.data.result.some(r=>!Array.isArray(r)||typeof r[0]!=='string'||r[0].length>2048||!Number.isSafeInteger(r[1]))))return;
+      if(m.data&&(!Array.isArray(m.data.result)||m.data.result.some(r=>!Array.isArray(r)||typeof r[0]!=='string'||r[0].length>2048||!Number.isSafeInteger(r[1]))))return;
       for(const j of jobs.values())if(matches(j,m)&&!running.has(j.id)){j.onDispatch?.(m.params);settle(j,m.data,m.error);}
     }
   };
@@ -3653,7 +4327,7 @@ function createTrackerCoordination(env={}) {
       let finish;const completed=new Promise(r=>finish=r);let finished=false,deadline;
       const done=(data,error)=>{if(finished)return;finished=true;win.clearTimeout(deadline);finish({data,error});};j.finish=done;
       deadline=win.setTimeout(()=>{try{j.handle?.abort?.();}catch(_){}if(!finished)done(null,{kind:'timeout',status:0,uncertain:true});},30000);
-      try{j.handle=env.transport(j.params,data=>{if(data?.error){done(null,{status:/auth|login|captcha|challenge|permission/i.test(JSON.stringify(data.error))?403:0,kind:'response'});return;}if(!Array.isArray(data?.result)||data.result.length>50||data.result.some(r=>!Array.isArray(r)||typeof r[0]!=='string'||!r[0]||r[0].length>2048||!Number.isSafeInteger(r[1]))||JSON.stringify(data).length>LIMIT){const auth=/auth|login|captcha|challenge|permission/i.test(String(typeof data==='string'?data:data?.error||data?.message||''));done(null,{status:auth?403:0,kind:auth?'authentication':'malformed'});}else done(data,null);},error=>done(null,error||{status:0}));}catch(e){done(null,{status:0,kind:'dispatch',message:e.message});}
+      try{j.handle=env.transport(j.params,data=>{j.onRawResponse?.(data);if(data?.error){done(null,{status:/auth|login|captcha|challenge|permission/i.test(JSON.stringify(data.error))?403:0,kind:'response'});return;}if(!Array.isArray(data?.result)||(j.purpose!=='backtrack'&&(data.result.length>50||data.result.some(r=>!Array.isArray(r)||typeof r[0]!=='string'||!r[0]||r[0].length>2048||!Number.isSafeInteger(r[1]))))||JSON.stringify(data).length>LIMIT){const auth=/auth|login|captcha|challenge|permission/i.test(String(typeof data==='string'?data:data?.error||data?.message||''));done(null,{status:auth?403:0,kind:auth?'authentication':'malformed'});}else done(data,null);},error=>done(null,error||{status:0}));}catch(e){done(null,{status:0,kind:'dispatch',message:e.message});}
       const result=await completed;if(j.account!==identity()){settle(j,null,{status:403,kind:'authentication',text:'登入帳號已變更；請明確恢復擷取'});j.cancelled=true;}
       if(result.error?.uncertain){j.uncertainUntil=g.until;g.reason='前次請求狀態未確認；等待安全接管';write(j.account,g);while(g.until>now())await sleep(Math.min(1000,g.until-now()));}
       g=read(j.account);g.until=0;g.nextAttempt=0;if(result.error&&!j.cancelled)failureGuard(j.account,g,result.error);else{if(!j.cancelled)g.consecutive=0;g.reason='共用請求已完成';write(j.account,g);}
@@ -3663,7 +4337,7 @@ function createTrackerCoordination(env={}) {
   }
   function submit(p,ok,fail,meta={}){announce();const account=identity();if(!account){fail({kind:'identity',text:'登入帳號未知；擷取暫停'});return {abort(){return true;}};}if(lastIdentity!==account){stop();lastIdentity=account;}
     const q=params(p);if(!q){fail({kind:'malformed'});return {abort(){return true;}};}
-    const j={id:id+':'+(++sequence),params:q,account,purpose:meta.purpose||'head',liveHead:!!meta.liveHead,boundary:meta.boundary||q.maxTimestampMs,generation:meta.generation??env.generation?.()??0,tier:meta.tier||500,ok,fail,onDispatch:meta.onDispatch,controller:new AbortController(),done:false,cancelled:false};j.key=key(j);jobs.set(j.id,j);own(j).catch(e=>{if(e.name!=='AbortError')settle(j,null,{status:0,kind:'coordination',message:e.message});});
+    const j={id:id+':'+(++sequence),params:q,account,purpose:meta.purpose||'head',liveHead:!!meta.liveHead,boundary:meta.boundary||q.maxTimestampMs,generation:meta.generation??env.generation?.()??0,tier:meta.tier||500,ok,fail,onDispatch:meta.onDispatch,onRawResponse:meta.onRawResponse,controller:new AbortController(),done:false,cancelled:false};j.key=key(j);jobs.set(j.id,j);own(j).catch(e=>{if(e.name!=='AbortError')settle(j,null,{status:0,kind:'coordination',message:e.message});});
     return {abort(){if(j.done)return true;j.cancelled=true;j.controller.abort();jobs.delete(j.id);if(!running.has(j.id))return true;try{const confirmed=j.handle?.abort?.();if(confirmed===true){j.finish(null,{kind:'cancelled',status:0});return true;}}catch(_){}return false;}};
   }
   function announce(hello=true){lastAnnounce=now();if(hello)post('hello',{account:identity()});post('budget',{account:identity(),budget:cleanBudget(env.budget?.()),expires:now()+120000});}
@@ -3690,7 +4364,7 @@ function createTrackerStorage(env){
    const cap=env.capacity?.()||{},store=tx.objectStore('events');let count=0,bytes=0;
    const apply=()=>{if(!validPolicy(epoch,token)){tx.abort();return;}let additions=0;const old=new Map(),gets=events.map(e=>new Promise(resolve=>{const q=store.get(e.guid);q.onsuccess=()=>{old.set(e.guid,q.result);if(!q.result)additions++;resolve();};q.onerror=()=>resolve();}));Promise.all(gets).then(()=>{
      if(!validPolicy(epoch,token)){tx.abort();return;}const incomingBytes=events.reduce((s,e)=>s+JSON.stringify(e).length*2,0)+conflicts.reduce((s,c)=>s+JSON.stringify(c).length*2,0)+scopeEntries.reduce((s,c)=>s+JSON.stringify(c).length*2,0);
-     if(cap.enabled&&((cap.maxRecords>0&&count+additions>cap.maxRecords)||(cap.maxBytes>0&&bytes+incomingBytes>cap.maxBytes))){tx._reason=Error('保存容量已達上限；資料仍留本頁，請匯出或清除');tx.abort();return;}
+     if(cap.enabled&&((cap.maxRecords>0&&count+additions>cap.maxRecords)||(cap.maxBytes>0&&bytes+incomingBytes+(cap.extraBytes||0)>cap.maxBytes))){tx._reason=Error('保存容量已達上限；資料仍留本頁，請匯出或清除');tx.abort();return;}
      for(const e of events){const previous=old.get(e.guid);if(previous&&(previous.identity!==e.identity||(previous.raw&&e.raw&&core.stable(previous.raw)!==core.stable(e.raw)))){const c={id:e.guid+':'+(e.raw?core.stable(e.raw):e.identity),guid:e.guid,receivedAt:e.receivedAt,original:previous,incoming:e};tx.objectStore('conflicts').put(c);cross.push(c);committedConflicts.push(c.id);}else{if(!previous||!previous.raw&&e.raw)store.put(e);committed.push(e.guid);}}
      for(const c of conflicts){tx.objectStore('conflicts').put(c);committedConflicts.push(c.id);}for(const s of scopeEntries){const cleaned=cleanScope(s);if(cleaned){const st=tx.objectStore('scopes'),q=st.get(cleaned.key);q.onsuccess=()=>{if(validPolicy(epoch,token))st.put(mergeScope(cleanScope(q.result),cleaned));else tx.abort();};}}
    }).catch(e=>{tx._reason=e;try{tx.abort();}catch(_){}});};
@@ -3860,11 +4534,221 @@ function createTrackerTime(zone=Intl.DateTimeFormat().resolvedOptions().timeZone
   return {zone,absolute,relative};
 }
 
+/* Independent historical cursor; transport is the shared coordination queue. */
+function createTrackerBacktrack(env){
+ 'use strict';
+ const clock=env.clock||{now:()=>Date.now(),set:(fn,ms)=>setTimeout(fn,ms),clear:id=>clearTimeout(id)};
+ let session=null,automatic=false,active=false,handle=null,timer=null,token=0;
+ const validCursor=c=>c&&Number.isSafeInteger(c.time)&&typeof c.guid==='string'&&c.guid.length>0;
+ function snapshot(){if(!session)return {automatic,active,inFlight:!!handle,state:'off',reason:'backtrack_reason_unconfigured'};const {rawPages,...progress}=session;return {...progress,bounds:{...session.bounds},elapsedMs:session.elapsedMs+(session.startedAt===null?0:clock.now()-session.startedAt),automatic,active,inFlight:!!handle};}
+ function changed(){const progress=snapshot();delete progress.elapsedMs;env.save?.({automatic,session:session?{...progress,elapsedMs:session.elapsedMs,startedAt:null}:null});env.change?.(snapshot());}
+ function cancel(){token++;if(timer!==null)clock.clear(timer);timer=null;handle?.abort?.();handle=null;}
+ function pause(reason='backtrack_reason_paused'){active=false;cancel();if(session){if(session.startedAt!==null){session.elapsedMs+=clock.now()-session.startedAt;session.startedAt=null;}session.state='paused';session.reason=reason;session.nextAt=null;}changed();}
+ function configure(T,bounds,limits={}){if(!Number.isSafeInteger(T)||T>clock.now()||!bounds||Object.values(bounds).length!==4||!Object.values(bounds).every(Number.isSafeInteger))throw Error('Invalid T/bounds');
+  if(session?.T===T&&JSON.stringify(session.bounds)===JSON.stringify(bounds))return false;
+  const right=Number.isSafeInteger(limits.right)?limits.right:T,lower=Number.isSafeInteger(limits.lower)?limits.lower:right-86400000;if(T>right||T<lower||right-lower>86400000||lower>=right)throw Error('Invalid bounded map interval');pause();session={right,lower,id:String(clock.now())+'-'+token,T,bounds:{...bounds},cursor:null,earliest:null,pages:0,returned:0,added:0,duplicates:0,unparsed:0,seenCursors:[],state:'off',reason:'backtrack_reason_configured',elapsedMs:0,startedAt:null,nextAt:null,rawPages:[],archiveCount:0};changed();return true;
+ }
+ function finish(state,reason){active=false;handle=null;if(session.startedAt!==null){session.elapsedMs+=clock.now()-session.startedAt;session.startedAt=null;}session.state=state;session.reason=reason;session.nextAt=null;changed();}
+ function dispatch(){if(!active||!session||handle)return;const wait=env.wait?.();if(wait){session.state='waiting';session.reason=wait;session.nextAt=clock.now()+1000;changed();timer=clock.set(dispatch,1000);return;}
+  if(session.cursor?.time<=session.lower){finish('ended','backtrack_reason_24h');return;}if(session.pages>=1000){finish('ended','backtrack_reason_limit');return;}
+  const s=session,epoch=token,p={...s.bounds,tab:'all',minTimestampMs:s.lower,maxTimestampMs:s.cursor?.time??s.T,plextContinuationGuid:s.cursor?.guid||''};s.state='queued';s.reason='backtrack_reason_queue';s.nextAt=null;changed();
+  // Sentinel handles also permit transports that call back synchronously in fixtures.
+  const pending={abort(){}};handle=pending;
+  const valid=()=>active&&epoch===token&&session===s;let captured=null;const capture=data=>{if(!valid()||captured===data)return;captured=data;const rawPage={query:p,response:data,at:clock.now()};s.rawPages.push(rawPage);env.archive?.(s.id,s.archiveCount=(s.archiveCount||0)+1,rawPage);};
+  const h=env.send(p,data=>{if(!valid())return;handle=null;capture(data);const rows=data?.result;
+   if(!Array.isArray(rows)||data.error){finish('error','backtrack_reason_invalid');return;}
+   s.failures=0;s.pages++;s.returned+=rows.length;
+   const counts=env.ingest(data,{bounds:s.bounds,upper:s.T,lower:s.lower,live:false,intent:'backtrack',source:'historical-backtrack',coverage:'unknown'})||{};s.added+=counts.added||0;s.duplicates+=counts.duplicates||0;s.unparsed+=counts.unparsed||0;
+   const times=rows.filter(r=>Number.isSafeInteger(r?.[1])).map(r=>r[1]);if(times.length)s.earliest=Math.min(s.earliest??Infinity,...times);
+   if(!rows.length){finish('ended','backtrack_reason_empty');return;}
+   const last=rows.at(-1),c={time:last?.[1],guid:last?.[0]},key=JSON.stringify(c);
+   if(!validCursor(c)||c.time>(s.cursor?.time??s.T)||rows.some(r=>!Array.isArray(r)||typeof r[0]!=='string'||!r[0]||r[0].length>2048||!Number.isSafeInteger(r[1])||r[1]>(s.cursor?.time??s.T))){finish('error','backtrack_reason_invalid');return;}
+   if(s.seenCursors.includes(key)){finish('ended','backtrack_reason_repeated');return;}
+   s.cursor=c;s.seenCursors.push(key);
+   if(c.time<=s.lower){finish('ended','backtrack_reason_24h');return;}if(automatic){s.state='waiting';s.reason='backtrack_reason_next';s.nextAt=clock.now()+1200;changed();timer=clock.set(dispatch,1200);}else finish('paused','backtrack_reason_complete');
+  },error=>{if(!valid())return;handle=null;const errorPage={query:p,error,at:clock.now()};s.rawPages.push(errorPage);env.archive?.(s.id,s.archiveCount=(s.archiveCount||0)+1,errorPage);if(error?.kind==='paused'){s.state='waiting';s.reason=error.text||'backtrack_reason_paused';s.nextAt=clock.now()+1000;changed();timer=clock.set(dispatch,1000);return;}if(automatic&&(error?.status===429||error?.status>=500||!error?.status&&!['authentication','malformed','identity','stopped'].includes(error?.kind))&&(s.failures=(s.failures||0)+1)<6){s.state='backoff';s.reason='backtrack_reason_retry';s.nextAt=clock.now()+Math.max(1200,Number(error?.retryAfterMs)||5000);changed();timer=clock.set(dispatch,s.nextAt-clock.now());return;}finish(error?.status===429?'backoff':'error',(error?.text||'backtrack_reason_failed')+(error?.status?' HTTP '+error.status:''));},{purpose:'backtrack',onRawResponse:capture,generation:env.generation?.(),tier:1200,onDispatch(){if(valid()){s.state='fetching';s.reason='backtrack_reason_fetching';changed();}}});
+  if(handle===pending)handle=h;
+ }
+ function start(){if(!session)throw Error('Configure T first');if(active)return;active=true;token++;session.failures=0;session.startedAt??=clock.now();dispatch();}
+ function setAutomatic(on){automatic=!!on;if(!automatic&&active)pause('backtrack_reason_auto_off');changed();}
+ function clear(){const config=session?{T:session.T,bounds:session.bounds,right:session.right,lower:session.lower}:null;pause('backtrack_reason_cleared');session=null;if(config)configure(config.T,config.bounds,{right:config.right,lower:config.lower});changed();}
+ function restore(saved){if(!saved?.session)return;try{const s=saved.session;if(!Number.isSafeInteger(s.T)||!s.bounds||s.right-s.lower>86400000||!Number.isSafeInteger(s.lower)||!Number.isSafeInteger(s.right)||s.T>s.right||s.T<s.lower||s.cursor&&!validCursor(s.cursor))return;automatic=saved.automatic===true;session={...s,rawPages:[],state:'paused',reason:'backtrack_reason_reload',startedAt:null,nextAt:null};changed();}catch(_){}}
+ function dispose(){pause();}
+ return {snapshot,configure,start,step:start,pause,setAutomatic,clear,restore,dispose,rawPages:()=>session?.rawPages||[]};
+}
+
+/* Derived event interpretation. Never mutates raw records or invents an operator. */
+function createTrackerEvidence(){
+ const POLICY=Object.freeze({version:'event-evidence-1',endpointWindowMs:6000,resonatorWindowMs:2000,flipWindowMs:2000,maxNearbyRows:2048});
+ const canonical=n=>String(n||'').trim().toLowerCase(),system=e=>e.actorKind==='system'||['__ada__','__jarvis__'].includes(canonical(e.player)),valid=p=>Array.isArray(p)&&p.length===2&&p.every(Number.isFinite)&&Math.abs(p[0])<=90&&Math.abs(p[1])<=180;
+ const portalKey=p=>valid(p?.position)?p.position.join(','):p?.guid||p?.portalGuid||null;
+ function fullText(e){const original=e.raw?.[2]?.plext?.text;if(typeof original==='string'&&original.length)return original;return (e.markup||[]).map(m=>String(m?.[1]?.plain??'')).join('');}
+ function manual(e){return !system(e)&&e.portals?.length===1&&valid(e.portals[0].position)&&/^(?:agent\s+)?used\s+(?:an?\s+|the\s+)?(?:ADA\s+Refactor|JARVIS\s+Virus)\s+(?:on|at)$/i.test(String(e.text||'').replace(/\s+/g,' ').trim())&&(e.markup||[]).filter(m=>m[0]==='PLAYER').length===1;}
+ function direct(e){return !system(e)&&['captured','deployed','upgraded','linked','beacon','battleBeacon','rbb','vrbb','fracker','flip'].includes(e.action)&&!!e.position;}
+ function resolve(input){const events=[...new Map(input.map(e=>[e.guid,e])).values()].sort((a,b)=>a.time-b.time||a.guid.localeCompare(b.guid)),actors=new Map(),atPortal=new Map(),linkGroups=new Map(),byGuid=new Map(),flips=[];
+  for(const e of events){const actor=canonical(e.player);if(!actors.has(actor))actors.set(actor,[]);actors.get(actor).push(e);for(const p of e.portals||[]){const k=portalKey(p);if(!k)continue;if(!atPortal.has(k))atPortal.set(k,[]);atPortal.get(k).push(e);}if(!system(e)&&e.action==='destroyedLink'){const k=actor+'|'+e.time;if(!linkGroups.has(k))linkGroups.set(k,[]);linkGroups.get(k).push(e);}}
+  function near(rows,t,window){let lo=0,hi=rows.length;while(lo<hi){const m=(lo+hi)>>1;if(rows[m].time<t-window)lo=m+1;else hi=m;}const out=[];while(lo<rows.length&&rows[lo].time<=t+window&&out.length<POLICY.maxNearbyRows+1)out.push(rows[lo++]);return out;}
+  const provenance=rows=>rows.map(e=>({guid:e.guid,time:e.time,action:e.action}));
+  for(const e of events){
+   const info={guid:e.guid,actor:e.player,actorTeam:e.team,objectFactions:(e.markup||[]).filter(m=>m[0]==='FACTION').map(m=>String(m[1]?.plain||'')),fullText:fullText(e),linkEndpoints:e.portals?.length===2&&['linked','destroyedLink'].includes(e.action)?e.portals:null};
+   if(e.action==='destroyedLink'&&!system(e)&&e.portals?.length===2){const nearby=near(actors.get(canonical(e.player))||[],e.time,POLICY.endpointWindowMs),sameTime=linkGroups.get(canonical(e.player)+'|'+e.time)||[],common=sameTime.length>1?e.portals.filter(p=>sameTime.every(row=>row.portals?.some(q=>portalKey(q)===portalKey(p)))):[];
+    const candidates=e.portals.map(p=>{const k=portalKey(p),res=nearby.filter(row=>row.guid!==e.guid&&row.action==='destroyedResonator'&&Math.abs(row.time-e.time)<=POLICY.resonatorWindowMs&&row.portals?.length===1&&portalKey(row.portals[0])===k),interactions=nearby.filter(row=>row.guid!==e.guid&&direct(row)&&portalKey(row.portals?.[0])===k),fields=nearby.filter(row=>row.action==='destroyedField'&&row.time===e.time&&row.portals?.length===1&&portalKey(row.portals[0])===k),shared=common.some(q=>portalKey(q)===k)?sameTime.filter(row=>row.guid!==e.guid):[];return {portal:p,supported:res.length>0||interactions.length>0||shared.length>0,sources:provenance([...new Map(res.concat(interactions,fields,shared).map(row=>[row.guid,row])).values()]),rules:[res.length?'same-actor-nearby-resonator':null,interactions.length?'same-actor-nearby-interaction':null,shared.length?'same-actor-same-time-common-endpoint':null,fields.length?'same-time-field-corroboration':null].filter(Boolean)};});
+    const supported=candidates.filter(c=>c.supported);info.attack={state:nearby.length>POLICY.maxNearbyRows?'limited':supported.length===1?'supported':supported.length>1?'ambiguous':'unresolved',reason:nearby.length>POLICY.maxNearbyRows?'association-resource-limit':supported.length>1?'conflicting-endpoint-support':supported.length?'corroborated-target-inference':'missing-corroboration',candidates,portal:nearby.length<=POLICY.maxNearbyRows&&supported.length===1?supported[0].portal:null,sourceGuids:[e.guid,...(supported.length===1?supported[0].sources.map(s=>s.guid):[])],windowMs:POLICY.endpointWindowMs,observedActorPosition:false};
+   }
+   byGuid.set(e.guid,info);
+  }
+  const systemGroups=new Map();for(const e of events.filter(system)){if(!['neutralized','destroyedLink','destroyedField','destroyedResonator','captured'].includes(e.action))continue;const k=canonical(e.player)+'|'+e.time;if(!systemGroups.has(k))systemGroups.set(k,[]);systemGroups.get(k).push(e);}
+  for(const [id,rows]of systemGroups){const all=[...new Map(rows.flatMap(e=>e.portals||[]).map(p=>[portalKey(p),p])).values()].filter(p=>portalKey(p)),common=all.filter(p=>rows.every(e=>e.portals?.some(q=>portalKey(q)===portalKey(p)))),portal=common.length===1?common[0]:null,nearby=portal?near(atPortal.get(portalKey(portal))||[],rows[0].time,POLICY.flipWindowMs):[],manualRows=nearby.filter(manual),names=[...new Set(manualRows.map(e=>canonical(e.player)))],sameTimeHumans=nearby.filter(e=>!system(e)&&e.time===rows[0].time&&direct(e)),device=portal?(atPortal.get(portalKey(portal))||[]).filter(e=>e.action==='vrbb'&&e.time<rows[0].time):[];
+   const flip={id:'system-change:'+id,time:rows[0].time,portal,state:portal&&names.length===1?'supported-manual':'unassigned',mechanism:portal&&names.length===1?'explicit-human-item-use':device.length?'autonomous-or-unknown':'manual-or-autonomous-unknown',operator:portal&&names.length===1?manualRows[0].player:null,operatorAttribution:portal&&names.length===1?'inferred-unique-explicit-item-corroboration':'unresolved',sourceGuids:rows.map(e=>e.guid),operatorEvidence:provenance(manualRows),sameTimeHumanCandidates:provenance(sameTimeHumans),deviceEvidence:provenance(device),reason:!portal?'unresolved-portal':names.length>1?'conflicting-operator-evidence':names.length===0?'system-record-has-no-human-operator':'supported',rawRowsRetained:true};flips.push(flip);for(const e of rows)byGuid.get(e.guid).flip=flip;
+  }
+  const playerCache=new Map();function forPlayer(name){const key=canonical(name);if(playerCache.has(key))return playerCache.get(key);const result=events.filter(e=>!system(e)&&canonical(e.player)===canonical(name)).map(e=>{const info=byGuid.get(e.guid),flip=manual(e)?flips.find(f=>f.state==='supported-manual'&&canonical(f.operator)===canonical(name)&&f.operatorEvidence.some(s=>s.guid===e.guid)):null;return {...e,attackAssociation:info?.attack||null,...(manual(e)?{analysisConstraint:{kind:'manual-flip',radius:40,portal:e.portals[0],rawIds:[...new Set([e.guid,...(flip?.sourceGuids||[])])],attribution:'explicit-human-item-record',time:e.time,mechanism:'manual-item',occurrence:flip?.id||e.guid}}:{})};});playerCache.set(key,result);return result;}
+  return {byGuid,flips,forPlayer,policy:POLICY};
+ }
+ return {POLICY,resolve,portalKey,fullText,manual};
+}
+
+/* Presentation-only evidence. Never mutates source records or inference constraints. */
+function createTrackerPresentation(distance){
+ const valid=p=>Array.isArray(p)&&p.length===2&&p.every(Number.isFinite)&&Math.abs(p[0])<=90&&Math.abs(p[1])<=180;
+ const key=p=>valid(p?.position)?p.position.join(','):null,canonical=n=>String(n||'').trim().toLowerCase();
+ function role(value){const v=String(value||'').trim().toUpperCase();return ['RES','RESISTANCE'].includes(v)?'RES':['ENL','ENLIGHTENED'].includes(v)?'ENL':v==='MACHINA'?'MACHINA':v==='NIA'?'NIA':'OTHER';}
+ function faction(e){const rows=(e.markup||[]).filter(m=>m[0]==='FACTION'),known=new Set(rows.map(m=>role(m[1]?.team||m[1]?.plain)));return known.size===1?[...known][0]:'OTHER';}
+ function length(e){if(!['linked','destroyedLink'].includes(e.action))return null;if(e.portals?.length!==2||!e.portals.every(p=>valid(p.position)))return {state:'unknown'};const m=distance(e.portals[0].position,e.portals[1].position);return Number.isFinite(m)?{state:'known',meters:m,text:m<1000?m.toFixed(1)+' m':(m/1000).toFixed(3)+' km'}:{state:'unknown'};}
+ function counts(views){const members=new Map();for(const v of views){const n=canonical(v.name||v.player);if(n&&!['__ada__','__jarvis__'].includes(n)&&!members.has(n))members.set(n,v);}const result={total:members.size,RES:0,ENL:0,MACHINA:0,NIA:0,OTHER:0};for(const v of members.values())result[['RES','ENL','MACHINA','NIA','OTHER'].includes(v.role)?v.role:role(v.team)]++;return result;}
+ function eventAction(e){if(e.action!=='unknown'||!['__ada__','__jarvis__'].includes(canonical(e.player)))return e.action;const shape=(e.markup||[]).map(m=>m[0]==='PLAYER'?' @ ':m[0]==='PORTAL'?' # ':m[0]==='FACTION'?'':m[0]==='TEXT'?m[1]?.plain||'':' ? ').join('').replace(/\s+/g,' ').trim();return /^(?:Agent )?@ destroyed (?:the |a |an )?Control Field @ # -[0-9,.]+ MUs?$/i.test(shape)?'destroyedField':e.action;}
+ function flips(events,evidence,conflicts=[]){const blocked=new Set(conflicts.map(c=>c.guid)),rows=new Map(events.map(e=>[e.guid,e])),candidates=[];
+  // Explicit human item use is positive evidence. Nearby human activity alone is not.
+  for(const e of events)if(evidence.manual(e)&&!blocked.has(e.guid)){const supported=evidence.resolveResult?.flips?.find(f=>f.state==='supported-manual'&&f.operatorEvidence.some(s=>s.guid===e.guid));const ids=[...new Set([e.guid,...(supported?.sourceGuids||[])])];if(ids.some(id=>blocked.has(id)))continue;candidates.push({id:'manual:'+e.guid,time:e.time,portal:e.portals[0],operator:e.player,mechanism:'explicit-human-item-use',rule:'explicit-item-use',sourceGuids:ids,representative:e.guid});}
+  const groups=new Map();for(const e of events)if(['__ada__','__jarvis__'].includes(canonical(e.player))){const id=canonical(e.player)+'|'+e.time;if(!groups.has(id))groups.set(id,[]);groups.get(id).push(e);}
+  for(const [id,group]of groups){const fields=group.filter(e=>eventAction(e)==='destroyedField'&&e.portals?.length===1&&key(e.portals[0])),targets=new Map(fields.map(e=>[key(e.portals[0]),e.portals[0]]));
+   for(const [target,portal]of targets){const cf=fields.filter(e=>key(e.portals[0])===target),links=group.filter(e=>e.action==='destroyedLink'&&e.portals?.length===2&&e.portals.every(p=>valid(p.position))&&e.portals.some(p=>key(p)===target));if(new Set(links.map(e=>e.portals.map(key).sort().join('|'))).size<2)continue;const sources=links.concat(cf),factions=new Set(sources.map(faction));if(factions.size!==1||factions.has('OTHER')||sources.some(e=>blocked.has(e.guid)))continue;
+    // Distinct Portal cascades at the same millisecond must not share a raw Link.
+    if(links.some(e=>e.portals.filter(p=>targets.has(key(p))).length>1))continue;
+    const ancillary=group.filter(e=>['neutralized','destroyedResonator','captured'].includes(e.action)&&e.portals?.length===1&&key(e.portals[0])===target&&!blocked.has(e.guid));const ids=sources.concat(ancillary).map(e=>e.guid).sort();const manual=candidates.filter(c=>c.operator&&key(c.portal)===target&&Math.abs(c.time-group[0].time)<=2000);if(manual.length>1)continue;if(manual.length===1){manual[0].sourceGuids=[...new Set(manual[0].sourceGuids.concat(ids))];manual[0].rule+=' + corroborated-system-cascade';continue;}if(candidates.some(c=>c.sourceGuids.some(i=>ids.includes(i))))continue;
+    candidates.push({id:'system:'+id+'|'+target,time:group[0].time,portal,operator:null,mechanism:'unknown',systemActor:group[0].player,rule:'system-two-links-and-field-common-target-consistent-object-faction',objectFaction:[...factions][0],sourceGuids:ids,representative:cf.map(e=>e.guid).sort()[0]});
+   }
+  }const byGuid=new Map();for(const c of candidates)for(const id of c.sourceGuids)byGuid.set(id,c);return {occurrences:candidates,byGuid,rows};
+ }
+ function fold(items,resolution,options={}){const result=[],added=new Set(),itemMap=new Map(items.map(i=>[i.event.guid,i]));for(const item of items){const f=resolution.byGuid.get(item.event.guid);if(!f){result.push(item);continue;}if(added.has(f.id))continue;added.add(f.id);const available=new Map(f.sourceGuids.filter(id=>itemMap.has(id)).map(id=>[id,itemMap.get(id)]));if(options.player&&canonical(f.operator)===canonical(options.player))for(const id of f.sourceGuids){const e=resolution.rows.get(id);if(e&&(!options.accept||options.accept(e)))available.set(id,{event:e,portal:f.portal});}const children=[...available.values()].sort((a,b)=>a.event.time-b.event.time||a.event.guid.localeCompare(b.event.guid));result.push({...item,event:resolution.rows.get(f.representative)||item.event,portal:f.portal,flip:f,batch:children});}return result;}
+ function age(time,T,hours,enabled,floor=.30){return enabled?Math.max(floor,Math.min(1,1-(T-time)/(hours*3600000))):1;}
+ return {valid,key,role,faction,length,counts,flips,fold,age,eventAction};
+}
+
+/* Display-only colors and per-Portal counts. No estimator or raw-record mutation. */
+function createTrackerDisplay(core){
+ const palettes=Object.freeze({RES:Object.freeze(['#d45cff']),ENL:Object.freeze(['#ffed32'])});
+ const canonical=n=>String(n||'').trim().toLowerCase();
+ function playerColor(name,role,fallback){return role==='RES'?'#d45cff':role==='ENL'?'#ffed32':fallback;}
+ function relation(e,target,key,parseLink){if(e.action!=='linked')return null;const link=parseLink(e);if(!link?.directed)return 'undirected';return key(link.origin)===target?'outgoing':key(link.destination)===target?'incoming':'unrelated';}
+ function portalStats(events,target,key,parseLink,eventAction=e=>e.action,displayCount=events.length){const rows=[...new Map(events.map(e=>[e.guid,e])).values()].sort((a,b)=>a.time-b.time||String(a.guid).localeCompare(String(b.guid))),actors=new Map(),categories={},relations={incoming:0,outgoing:0,undirected:0};let systemCount=0;for(const e of rows){const action=eventAction(e);categories[action]=(categories[action]||0)+1;const r=relation(e,target,key,parseLink);if(r in relations)relations[r]++;if(core.isSystem(e)){systemCount++;continue;}const id=canonical(e.player),previous=actors.get(id);actors.set(id,{name:e.player,role:core.role(e),count:(previous?.count||0)+1,lastTime:e.time});}const attributes={RES:0,ENL:0,MACHINA:0,NIA:0,OTHER:0};for(const a of actors.values())attributes[a.role]++;return {rawCount:rows.length,displayCount,systemCount,uniqueAccounts:actors.size,uniquePlayers:attributes.RES+attributes.ENL,attributes,categories,relations,actors:[...actors.values()]};}
+ return {palettes,playerColor,relation,portalStats};
+}
+
+/* Owns the temporary live pause for all map-history operations. */
+function createTrackerHistorySession(env){
+ let saved=null,leases=new Set(),serial=0;
+ function persist(){env.save?.(saved?{...saved}:null);}
+ function acquire(){if(!saved){saved={auto:env.live(),observation:env.observation()};env.setLive(false);env.freeze();persist();}const id=++serial;leases.add(id);env.change?.();return id;}
+ function release(id){if(!leases.delete(id)||leases.size)return;const s=saved;saved=null;persist();env.setLive(s.auto);env.restore(s.observation,s.auto);env.change?.();}
+ function choice(on){if(saved){saved.auto=!!on;persist();env.setLive(false);}else env.setLive(!!on);env.change?.();}
+ function reset(){if(saved){const s=saved;leases.clear();saved=null;persist();env.setLive(s.auto);env.restore(s.observation,s.auto);env.change?.();}}
+ function recover(s){if(!s||typeof s.auto!=='boolean'||typeof s.observation?.live!=='boolean')return false;env.setLive(s.auto);env.restore(s.observation,s.auto);env.save?.(null);env.recovered?.();return true;}
+ return {acquire,release,choice,reset,recover,snapshot:()=>({active:!!saved,leases:leases.size,restoreAuto:saved?.auto??null})};
+}
+
+/* Adapted internally from COMM Capture 0.1.0-dev.2 IITC preview.
+ * See third-party/comm-capture-dev2 and CAPTURE-ATTRIBUTION.md. Upstream
+ * notices/rights are retained; this port does not grant an upstream MIT license.
+ */
+function createTrackerCapture(env){
+ 'use strict';
+ const clone=v=>v==null?v:JSON.parse(JSON.stringify(v)),now=()=>env.now?.()??Date.now(),iso=()=>new Date(now()).toISOString();
+ let bundle=null,running=false,cancelled=false,handle=null,wake=null,cancelRequest=null;
+ const plugin={VERSION:env.version,SCHEMA_VERSION:'1.0.0',FORMAT_CAPTURE:'ingress-comm-capture',cloneJson:clone,makeCaptureId:()=>env.id?.()||'echotrace-capture-'+now()};
+ function changed(){env.change?.(snapshot());}
+ function snapshot(){return {range:bundle?{...bundle.capture.requestedTimeRange}:null,running,cancelRequested:cancelled,state:bundle?.completion.state||'idle',pages:bundle?.pages.length||0,reason:bundle?.completion.reason||null,summary:bundle?.summary||null};}
+ function sleep(ms){return new Promise(resolve=>{const id=setTimeout(()=>{wake=null;resolve();},ms);wake=()=>{clearTimeout(id);wake=null;resolve();};});}
+ // The upstream summary is inserted below; raw page responses remain authoritative.
+   plugin.extractResult = function (response) {
+    if (Array.isArray(response)) return response;
+    if (response && Array.isArray(response.result)) return response.result;
+    return [];
+  };
+  plugin.rowInRange = function (row, startMs, endMs) {
+    const timestamp = Array.isArray(row) ? row[1] : null;
+    return Number.isFinite(timestamp) && timestamp >= startMs && timestamp <= endMs;
+  };
+  plugin.buildSummary = function (bundle) {
+    const range = bundle.capture.requestedTimeRange;
+    const guids = new Map();
+    const summary = {
+      rawRecords: 0, inRangeRecords: 0, uniqueInRangeGuids: 0,
+      duplicateInRangeOccurrences: 0, conflictingGuids: 0,
+      plextTypes: {}, categories: {}, markupTypes: {}, perTab: {},
+    };
+    const increment = (object, key) => {
+      const normalized = String(key == null ? '<missing>' : key);
+      Object.defineProperty(object,normalized,{value:(Object.hasOwn(object,normalized)?object[normalized]:0)+1,writable:true,enumerable:true,configurable:true});
+    };
+
+    for (const page of bundle.pages) {
+      const rows = plugin.extractResult(page.response);
+      summary.rawRecords += rows.length;
+      if (!summary.perTab[page.tab]) summary.perTab[page.tab] = { rawRecords: 0, inRangeRecords: 0, uniqueGuids: 0 };
+      summary.perTab[page.tab].rawRecords += rows.length;
+      rows.forEach((row) => {
+        if (!plugin.rowInRange(row, range.startMs, range.endMs)) return;
+        summary.inRangeRecords += 1;
+        summary.perTab[page.tab].inRangeRecords += 1;
+        if (!guids.has(row[0])) guids.set(row[0], new Set());
+        guids.get(row[0]).add(JSON.stringify(row));
+        const plext = row[2] && row[2].plext ? row[2].plext : {};
+        increment(summary.plextTypes, plext.plextType);
+        increment(summary.categories, plext.categories);
+        for (const markup of Array.isArray(plext.markup) ? plext.markup : []) {
+          increment(summary.markupTypes, Array.isArray(markup) ? markup[0] : '<invalid>');
+        }
+      });
+    }
+
+    for (const tab of Object.keys(summary.perTab)) {
+      const tabGuids = new Set();
+      for (const page of bundle.pages.filter((item) => item.tab === tab)) {
+        for (const row of plugin.extractResult(page.response)) if (plugin.rowInRange(row, range.startMs, range.endMs)) tabGuids.add(row[0]);
+      }
+      summary.perTab[tab].uniqueGuids = tabGuids.size;
+    }
+    summary.uniqueInRangeGuids = guids.size;
+    summary.duplicateInRangeOccurrences = summary.inRangeRecords - guids.size;
+    summary.conflictingGuids = Array.from(guids.values()).filter((variants) => variants.size > 1).length;
+    return summary;
+  };
+ function finish(state,reason){bundle.capture.completedAt=iso();bundle.completion.state=state;bundle.completion.reason=reason;const s=bundle.completion.tabs.all;s.state=state;s.reason=reason;bundle.summary=plugin.buildSummary(bundle);running=false;handle=null;cancelRequest=null;changed();return clone(bundle);}
+ function cancel(reason='user-cancelled'){if(!running)return false;cancelled=true;bundle.completion.reason=reason;wake?.();cancelRequest?.();changed();return true;}
+ async function request(query,page,delayMs){return new Promise(resolve=>{let done=false;const settle=(data,error)=>{if(done)return;done=true;cancelRequest=null;handle=null;page.respondedAt=iso();if(data!==undefined&&data!==null)page.response=clone(data);if(error)page.error={kind:String(error.kind||'transport'),status:Number.isFinite(error.status)?error.status:null,retryAfterMs:Math.max(0,Number(error.retryAfterMs)||0)};resolve({data,error});};cancelRequest=()=>{handle?.abort?.();settle(null,{kind:'user-cancelled'});};const h=env.send(query,d=>settle(d,null),e=>settle(null,e),{purpose:'capture',generation:env.generation?.(),tier:delayMs,onRawResponse:d=>{if(!done)page.response=clone(d);}});if(!done)handle=h;});}
+ async function start(options){if(running)throw Error('capture-running');const {startMs,endMs}=options,bounds=clone(options.bounds),delayMs=options.delayMs??1200,maxPagesPerTab=options.maxPagesPerTab??100,maxRetries=options.maxRetries??2;
+  if(!Number.isSafeInteger(startMs)||!Number.isSafeInteger(endMs)||startMs>=endMs||endMs>now()||!Number.isInteger(delayMs)||delayMs<800||delayMs>3600000||!Number.isInteger(maxPagesPerTab)||maxPagesPerTab<1||maxPagesPerTab>500||!Number.isInteger(maxRetries)||maxRetries<0||maxRetries>2||options.tabs&&JSON.stringify(options.tabs)!=='["all"]'||!bounds||Object.keys(bounds).sort().join(',')!=='maxLatE6,maxLngE6,minLatE6,minLngE6'||!Object.values(bounds).every(Number.isSafeInteger))throw Error('invalid-capture-options');
+  bundle={format:plugin.FORMAT_CAPTURE,schemaVersion:plugin.SCHEMA_VERSION,generator:{id:'iitc.plugin.playerTrackerChatGPT',name:'EchoTrace by khresist / adapted COMM Capture dev.2',version:env.version},capture:{id:plugin.makeCaptureId(),source:env.source||'https://intel.ingress.com/intel',startedAt:iso(),completedAt:null,timezoneOffsetMinutes:-new Date(now()).getTimezoneOffset(),requestedTimeRange:{startMs,endMs,startIso:new Date(startMs).toISOString(),endIso:new Date(endMs).toISOString()},mapBoundsE6:clone(bounds),options:{tabs:['all'],requestDelayMs:delayMs,maxPagesPerTab,maxRetries,requestMode:'sequential',transport:'iitc-postAjax'}},completion:{state:'running',reason:null,warnings:[],tabs:{all:{state:'running',reason:null,pages:0,rawRecords:0,inRangeRecords:0,firstTimestampMs:null,lastTimestampMs:null}}},pages:[],summary:null};running=true;cancelled=false;changed();let cursor={time:endMs,guid:''},seen=new Set(),retries=0,successful=0;
+  try{while(running){if(cancelled)return finish('cancelled',bundle.completion.reason||'user-cancelled');const query={...bounds,minTimestampMs:-1,maxTimestampMs:cursor.time,tab:'all',plextContinuationGuid:cursor.guid},page={tab:'all',pageIndex:bundle.pages.length+1,requestedAt:iso(),respondedAt:null,request:clone(query),response:null,error:null};bundle.pages.push(page);changed();const {data,error}=await request(query,page,delayMs);
+    if(cancelled)return finish('cancelled',bundle.completion.reason||'user-cancelled');
+    if(error){const retryable=!['authentication','identity','malformed','superseded','stopped'].includes(error.kind)&&(!error.status||error.status===429||error.status>=500);if(retryable&&retries<maxRetries){retries++;bundle.completion.reason='retry';changed();await sleep(Math.max(delayMs,[2000,5000][retries-1],Number(error.retryAfterMs)||0));continue;}return finish('failed','request-error');}
+    if(!data||!Array.isArray(data.result)||data.error){page.error={kind:'invalid-response'};return finish('failed','invalid-response');}
+    retries=0;successful++;const rows=data.result,status=bundle.completion.tabs.all;status.pages++;status.rawRecords+=rows.length;status.inRangeRecords+=rows.filter(r=>plugin.rowInRange(r,startMs,endMs)).length;for(const r of rows)if(Number.isSafeInteger(r?.[1])){status.firstTimestampMs=Math.max(status.firstTimestampMs??-Infinity,r[1]);status.lastTimestampMs=Math.min(status.lastTimestampMs??Infinity,r[1]);}changed();
+    if(!rows.length)return finish('complete','empty-result');const last=rows.at(-1),key=JSON.stringify([last?.[0],last?.[1]]);
+    if(rows.some(r=>!Array.isArray(r)||typeof r[0]!=='string'||!r[0]||r[0].length>2048||!Number.isSafeInteger(r[1]))||last[1]>cursor.time)return finish('partial','invalid-page-cursor');
+    if(seen.has(key))return finish('partial','repeated-page-cursor');seen.add(key);cursor={time:last[1],guid:last[0]};
+    if(cursor.time<startMs)return finish('complete','reached-start-time');if(successful>=maxPagesPerTab)return finish('partial','max-pages-reached');await sleep(delayMs);
+  }}catch(_){return finish(cancelled?'cancelled':'failed',cancelled?'user-cancelled':'unexpected-error');}
+ }
+ return {start,cancel,snapshot,bundle:()=>clone(bundle),dispose:()=>cancel('disposed')};
+}
+
 /* Shared structured COMM semantics. Pure; raw markup is never rewritten. */
 function parseTrackerLink(e) {
   const m=e.markup||[], actors=m.filter(x=>x[0]==='PLAYER');
-  if(actors.length!==1||actors[0][1]?.plain!==e.player||e.action!=='linked'||e.portals?.length!==2||!e.portals.every(p=>p.position?.every(Number.isFinite)))return null;
+  if(actors.length!==1||actors[0][1]?.plain!==e.player||!['linked','destroyedLink'].includes(e.action)||e.portals?.length!==2||!e.portals.every(p=>p.position?.every(Number.isFinite)))return null;
   const shape=m.map(x=>x[0]==='PLAYER'?' @ ':x[0]==='PORTAL'?' # ':x[0]==='TEXT'?x[1]?.plain||'':x[0]==='FACTION'?'':' ? ').join('').replace(/\s+/g,' ').trim();
+  if(e.action==='destroyedLink'&&/^(?:agent )?@ destroyed (?:a |the |an )?Link (?:from |between )?# (?:to|and) #$/i.test(shape))return {directed:false,destroyed:true,endpoints:e.portals};
   if(/^(?:agent )?@ linked(?: from)? # to #$/i.test(shape))return {directed:true,origin:e.portals[0],destination:e.portals[1],endpoints:e.portals};
   if(/^(?:agent )?@ linked (?:between )?# (?:and|with) #$/i.test(shape))return {directed:false,endpoints:e.portals};
   return null;
@@ -3874,6 +4758,7 @@ function parseTrackerInteraction(e, linkParser=parseTrackerLink) {
   if(parseTrackerSystem(e))return null;
   const text=String(e.text||'').replace(/\s+/g,' ').trim();let rule,portal;
   if(e.action==='linked'){rule='directed-link-origin';const link=linkParser(e);portal=link?.directed?link.origin:null;}
+  else if(e.action==='flip'&&/^(?:agent )?used (?:an? |the )?(?:ADA Refactor|JARVIS Virus) (?:on|at)$/i.test(text))rule='manual-item-interaction';
   else if(e.action==='captured'&&/^(?:agent )?captured$/i.test(text))rule='capture-portal';
   else if(e.action==='deployed'&&/^(?:agent )?deployed (?:a |the )?Resonator on$/i.test(text))rule='deploy-resonator-portal';
   else if(e.action==='upgraded'&&/^(?:agent )?upgraded (?:a |the )?Resonator on$/i.test(text))rule='upgrade-resonator-portal';
@@ -3885,7 +4770,7 @@ function parseTrackerInteraction(e, linkParser=parseTrackerLink) {
   } else return null;
   const actors=(e.markup||[]).filter(m=>m?.[0]==='PLAYER');
   if(actors.length!==1||actors[0][1]?.plain!==e.player)return {rule,reason:'ambiguous-actor'};
-  if(e.action!=='linked')portal=e.portals?.length===1?e.portals[0]:null;
+  if(!['linked','destroyedLink'].includes(e.action))portal=e.portals?.length===1?e.portals[0]:null;
   if(!portal)return {rule,reason:e.action==='linked'?'unresolved-link-origin':'ambiguous-portals'};
   const p=portal.position;
   if(!Array.isArray(p)||p.length!==2||!p.every(Number.isFinite)||Math.abs(p[0])>90||Math.abs(p[1])>180)return {rule,reason:'no-coordinate'};
@@ -3903,12 +4788,13 @@ function parseTrackerDevice(markup){
 function parseTrackerSystem(e){
   const name=String(e?.player||'').trim().toLowerCase();
   if(!['__jarvis__','__ada__'].includes(name))return e?.actorKind==='system'?{identity:'announcement',supported:true,action:e.action}:null;
-  const shape=(e.markup||[]).map(x=>x[0]==='PLAYER'?' @ ':x[0]==='PORTAL'?' # ':x[0]==='TEXT'?x[1]?.plain||'':x[0]==='FACTION'?' $ ':' ? ').join('').replace(/\s+/g,' ').trim();
+  const shape=(e.markup||[]).map(x=>x[0]==='PLAYER'?' @ ':x[0]==='PORTAL'?' # ':x[0]==='TEXT'?x[1]?.plain||'':x[0]==='FACTION'?'':' ? ').join('').replace(/\s+/g,' ').trim();
   let action=null;
-  if(/^@ neutralized #$/i.test(shape))action='neutralized';
-  else if(/^@ destroyed (?:a |the )?Resonator on #$/i.test(shape))action='destroyedResonator';
-  else if(/^@ destroyed (?:the |a |an )?Link (?:from |between )?# (?:to|and) #$/i.test(shape))action='destroyedLink';
-  else if(/^@ destroyed (?:the |a |an )?(?:Control )?Field (?:at |on |from )?#(?: (?:to|and|,)? #){0,2}$/i.test(shape))action='destroyedField';
+  if(/^(?:agent )?@ neutralized #$/i.test(shape))action='neutralized';
+  else if(/^(?:agent )?@ destroyed (?:a |the )?Resonator on #$/i.test(shape))action='destroyedResonator';
+  else if(/^(?:agent )?@ destroyed (?:the |a |an )?Link (?:from |between )?# (?:to|and) #$/i.test(shape))action='destroyedLink';
+  else if(/^(?:agent )?@ destroyed (?:the |a |an )?(?:Control )?Field (?:@|at |on |from )?#(?: (?:to|and|,)? #)*(?: ?- ?[0-9,.]+ MUs?)?$/i.test(shape))action='destroyedField';
+  else if(/^(?:agent )?@ destroyed (?:the |a |an )?(?:Control )?Field (?:at |on |from )?#(?: (?:to|and|,)? #){0,2}$/i.test(shape))action='destroyedField';
   return {identity:name,supported:!!action,action:action||'unknown'};
 }
 function parseTrackerNeutralized(markup){
@@ -3920,15 +4806,16 @@ function parseTrackerNeutralized(markup){
 function createPositionInference(linkParser,interactionParser){
  'use strict';
  const parseLink=linkParser||(typeof require==='function'?require('./semantics.js'):null),parseInteraction=interactionParser||(typeof require==='function'?require('./semantics.js').interaction:null);
+ const eventEvidence=(typeof createTrackerEvidence==='function'?createTrackerEvidence:require('./evidence.js'))();
  const geometry=(typeof createTrackerRegion==='function'?createTrackerRegion:require('./region.js'))();
- const VERSION='local-average-regions-2',DATE='2026-10-12',RADIUS=40,N=64,EARTH=6371008.8;
+ const VERSION='local-average-regions-3',DATE='2026-10-16',RADIUS=40,N=64,EARTH=6371008.8;
  const PARAMETERS=Object.freeze({version:VERSION,inactivityMs:360000,referenceMaxAgeMs:360000,referenceMaxSpanMs:360000,localEpisodeGapMs:3000,maxReferenceKmh:1000,metricScale:1.006,sides:N,numericM:.003,maxEffectiveConstraints:128,maxBranches:16,maxProjectionM:25000,maxLatitude:70,windowsPerSlice:4,geometryVertices:20000,maxConsistencyEdges:2048,maximumCandidateKmh:1000,speedToleranceMps:.3,transitionToleranceMps:.5,accelerationMps2:15,curvatureAccelerationMps2:.5});
  // Last five fields preserve existing observed motion/conflict boundaries only.
  // They never generate region radii or a speed/acceleration state envelope.
  function geoDistance(a,b){const r=Math.PI/180,h=Math.sin((b[0]-a[0])*r/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin((b[1]-a[1])*r/2)**2;return EARTH*2*Math.asin(Math.sqrt(Math.min(1,h)));}
  function isSystem(e){return e.actorKind==='system'||['__ada__','__jarvis__'].includes(String(e.player||'').trim().toLowerCase());}
  function eligibility(e){if(isSystem(e)||!['RES','ENL'].includes(e.role))return {reason:'account-role'};const a=parseInteraction?.(e,parseLink);return a||{reason:['destroyedResonator','destroyedLink','destroyedField','fielded'].includes(e.action)?'event-object-only':'unsupported-action'};}
- function anchor(e){const a=eligibility(e);return a.reason?null:{id:e.guid,rawIds:[e.guid],actor:e.player,time:e.time,portal:a.portal,position:a.position,radius:RADIUS,source:e.source,rule:VERSION,date:DATE,evidenceRule:a.rule};}
+ function anchor(e){const a=eligibility(e);return a.reason?null:{id:e.guid,rawIds:e.analysisConstraint?.rawIds||[e.guid],actor:e.player,time:e.time,portal:a.portal,position:a.position,radius:RADIUS,source:e.source,rule:VERSION,date:DATE,evidenceRule:a.rule,assumptions:e.analysisConstraint?{kind:'manual-flip',radiusM:40,attribution:e.analysisConstraint.attribution,mechanism:e.analysisConstraint.mechanism,occurrence:e.analysisConstraint.occurrence}:null};}
  function stable(v){if(Array.isArray(v))return '['+v.map(stable).join(',')+']';if(v&&typeof v==='object')return '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+stable(v[k])).join(',')+'}';return JSON.stringify(v);}
  function geometryKey(a){return stable([a.actor,a.time,a.position,a.radius,a.rule,a.assumptions||null]);}
  function collapse(anchors){const m=new Map();for(const a of anchors){const key=geometryKey(a),old=m.get(key);if(old)old.rawIds.push(...(a.rawIds||[a.id]));else m.set(key,{...a,rawIds:[...(a.rawIds||[a.id])]});}return [...m.values()].map(a=>({...a,rawIds:[...new Set(a.rawIds)].sort()})).sort((a,b)=>a.time-b.time||geometryKey(a).localeCompare(geometryKey(b)));}
@@ -3943,24 +4830,26 @@ function createPositionInference(linkParser,interactionParser){
  }
  function splitMotion(parts){const out=[],conflicts=[];for(const original of parts){let current={...original,groups:[]},trusted=[];out.push(current);for(const g of original.groups){if(g.anchors.length){const prev=trusted.at(-1),before=trusted.at(-2),pair=prev?transition(prev,g):null,triple=before?transition(before,prev,g):null,change=pair||triple;if(change){const boundary=change.shared?prev.time:g.time;conflicts.push({...change,time:boundary,rawIds:[...new Set([...(prev?.events||[]),...g.events].map(e=>e.guid))]});if(change.shared){const index=current.groups.findIndex(q=>q.time===prev.time),tail=current.groups.slice(index);current.groups=current.groups.slice(0,index+1);current.closed=true;current={...original,reason:change.reason,conflict:change,sharedBoundary:boundary,groups:tail};trusted=[prev];}else{current.closed=true;current={...original,reason:change.reason,conflict:change,groups:[]};trusted=[];}out.push(current);}trusted.push(g);}current.groups.push(g);}current.closed=original.closed;}return {parts:out,conflicts};}
   function attackConstraints(events,options={}){
-    const R=options.xmpRadius??168,S=40,excluded=[];
-    if(!Number.isFinite(R)||R<=0||R>2000)return {constraints:[],excluded,reason:'invalid-radius',received:events.filter(e=>e.action==='destroyedResonator').length};
-    const counts=new Map(),eligible=events.filter(e=>e.action==='destroyedResonator');
-    for(const e of eligible){const key=e.time+'|'+e.portals?.[0]?.position?.join(',');if(!counts.has(key))counts.set(key,new Set());counts.get(key).add(e.guid);}
-    const constraints=[];
-    for(const e of eligible){
-      const actors=(e.markup||[]).filter(m=>m[0]==='PLAYER').map(m=>m[1]?.plain),p=e.portals?.[0],pos=p?.position,proof=e.raw?.[2]?.eventTimeTargetEvidence,mechanism=[e.raw?.[2]?.attackMechanism,proof?.mechanism].filter(Boolean).join(' ');
-      const valid=q=>Array.isArray(q)&&q.length===2&&q.every(Number.isFinite)&&Math.abs(q[0])<=90&&Math.abs(q[1])<=180;
-      const resolved=proof?.time===e.time&&proof?.mechanism==='XMP'&&typeof proof.source==='string'&&!!proof.source;
-      let reason=isSystem(e)||!['RES','ENL'].includes(e.role)?'account-role':actors.length!==1||actors[0]!==e.player?'ambiguous-actor':!/^(?:agent\s+)?destroyed\s+(?:a|the)?\s*Resonator\s+on$/i.test(String(e.text).trim())?'unsupported-destruction':e.portals?.length!==1?'ambiguous-portals':!valid(pos)?'no-coordinate':/ADA|Jarvis|VRBB|very rare battle beacon|flip|refactor/i.test(mechanism||'')?'excluded-mechanism':/ultra\s*strike/i.test(mechanism)?'non-xmp-mechanism':counts.get(e.time+'|'+pos.join(','))?.size>1&&!resolved?'suspected-flip-or-duplicate-attack':null;
+    const R=options.xmpRadius??168,S=40,excluded=[],unique=new Map(),conflicts=new Set();
+    for(const e of events){const prior=unique.get(e.guid);if(prior&&stable(prior.raw||prior.identity)!==stable(e.raw||e.identity))conflicts.add(e.guid);else if(!prior)unique.set(e.guid,e);}
+    const rows=[...unique.values()],resolved=eventEvidence.resolve(rows),eligible=rows.filter(e=>['destroyedResonator','destroyedLink'].includes(e.action)),byGeometry=new Map();
+    if(!Number.isFinite(R)||R<=0||R>2000)return {constraints:[],excluded,reason:'invalid-radius',received:eligible.length};
+    for(const e of eligible){const actors=(e.markup||[]).filter(m=>m[0]==='PLAYER'),info=e.attackAssociation||resolved.byGuid.get(e.guid)?.attack;
+      let reason=conflicts.has(e.guid)?'duplicate-guid-conflict':isSystem(e)||!['RES','ENL'].includes(e.role)?'account-role':actors.length!==1||actors[0][1]?.plain!==e.player?'ambiguous-actor':null;
+      if(e.action==='destroyedResonator'&&!/^(?:agent\s+)?destroyed\s+(?:a|the)?\s*Resonator\s+on$/i.test(String(e.text).trim()))reason=reason||'unsupported-destruction';
+      let targets=e.action==='destroyedLink'?(info?.state==='supported'?[info.portal]:(e.portals||[])):e.portals;
+      if(!targets?.length||targets.some(p=>!validPosition(p?.position))||e.action==='destroyedResonator'&&targets.length!==1||e.action==='destroyedLink'&&targets.length>2)reason=reason||'ambiguous-portals';
       if(reason){excluded.push({guid:e.guid,reason});continue;}
-      const known=proof?.time===e.time&&typeof proof.source==='string'&&!!proof.source&&!!proof.targetIdentity&&Array.isArray(proof.positions)&&proof.positions.length&&proof.positions.every(valid);
-      const targets=known?proof.positions:[pos];
-      // Exact target duplicates are removable; distinct targets remain a UNION.
-      constraints.push(collapse(targets.map((position,index)=>({id:e.guid,rawIds:[e.guid],actor:e.player,time:e.time,portal:p,position:position.slice(),radius:known?R:R+S,source:e.source,rule:VERSION,date:DATE,alternative:index,assumptions:{scenario:'XMP hypothesis',mechanism:resolved?'event-time XMP evidence':'unverified XMP assumption',attackRadiusM:R,resonatorOffsetM:known?0:S,profile:'legacy-community-2024-06-06',profileDate:'2024-06-06',targetEvidence:known?proof.source:null,targetIdentity:known?proof.targetIdentity:null}}))));
+      const proof=e.raw?.[2]?.eventTimeTargetEvidence,known=proof?.time===e.time&&proof?.targetIdentity&&typeof proof.source==='string'&&Array.isArray(proof.positions)&&proof.positions.length&&proof.positions.every(validPosition);
+      const exactMechanism=proof?.time===e.time?String(proof.mechanism||''):'';
+      if(/ADA|Jarvis|VRBB|flip|refactor|ultra\s*strike/i.test(exactMechanism)){excluded.push({guid:e.guid,reason:'explicit-non-xmp-mechanism'});continue;}
+      if(known)targets=proof.positions.map(position=>({position}));
+      const ids=[...new Set([e.guid,...(info?.state==='supported'?info.sourceGuids||[]:[])])],choices=collapse(targets.map((portal,index)=>({id:e.guid,rawIds:ids,actor:e.player,time:e.time,portal,position:portal.position.slice(),radius:R+(known?0:S),source:e.source,rule:VERSION,date:DATE,alternative:index,assumptions:{kind:'attack',scenario:'XMP hypothesis',mechanism:exactMechanism==='XMP'?'event-time XMP evidence':'unverified XMP assumption',attackRadiusM:R,resonatorOffsetM:known?0:S,targetAssociation:info?.state||'reported-resonator-target',alternatives:targets.length>1,profile:'legacy-community-2024-06-06',profileDate:'2024-06-06',targetIdentity:known?proof.targetIdentity:null}})));
+      const key=stable(choices.map(a=>[a.actor,a.time,a.position,a.radius,a.assumptions]));const prior=byGeometry.get(key);if(prior)for(let i=0;i<prior.length;i++)prior[i].rawIds=[...new Set(prior[i].rawIds.concat(choices[i].rawIds))].sort();else byGeometry.set(key,choices);
     }
-    return {constraints,excluded,received:eligible.length};
+    return {constraints:[...byGeometry.values()],excluded,received:eligible.length,rawEligibleIds:eligible.filter(e=>!excluded.some(x=>x.guid===e.guid)).map(e=>e.guid)};
   }
+ function validPosition(p){return Array.isArray(p)&&p.length===2&&p.every(Number.isFinite)&&Math.abs(p[0])<=90&&Math.abs(p[1])<=180;}
 
  function spatialValidity(anchors,P,deadline){for(const time of [...new Set(anchors.map(a=>a.time))]){const disks=anchors.filter(a=>a.time===time).map(a=>({...a,c:P.project(a.position),r:a.radius/P.k-PARAMETERS.numericM}));if(disks.some(a=>a.r<=0))return {state:'unresolved'};const candidates=disks.map(a=>a.c);
   for(let i=0;i<disks.length;i++)for(let j=0;j<i;j++){if(Date.now()>deadline)throw Error('budget');const a=disks[i],b=disks[j],geodesic=geoDistance(a.position,b.position)/PARAMETERS.metricScale;if(geodesic>a.radius+b.radius+.00001)return {state:'conflict',certificate:{method:'geodesic-disjoint-disks',distanceM:geodesic,radiusSumM:a.radius+b.radius}};if(geodesic>=a.radius+b.radius-2*PARAMETERS.numericM)return {state:'unresolved'};const d=Math.hypot(b.c[0]-a.c[0],b.c[1]-a.c[1]);if(d>0&&d<=a.r+b.r&&d>=Math.abs(a.r-b.r)){const x=(a.r*a.r-b.r*b.r+d*d)/(2*d),h=Math.sqrt(Math.max(0,a.r*a.r-x*x)),v=[(b.c[0]-a.c[0])/d,(b.c[1]-a.c[1])/d],m=[a.c[0]+v[0]*x,a.c[1]+v[1]*x];candidates.push([m[0]-v[1]*h,m[1]+v[0]*h],[m[0]+v[1]*h,m[1]-v[0]*h]);}}
@@ -3998,7 +4887,7 @@ function createPositionInference(linkParser,interactionParser){
   const finish=()=>{if(current.length>=2){const joint=common(current);if(joint){const rawIds=[...new Set(current.flatMap(g=>g.anchors.flatMap(a=>a.rawIds)))],id=stable([VERSION,'local-episode',current.map(g=>g.time),rawIds]);episodes.push({id,startTime:current[0].time,endTime:current.at(-1).time,times:current.map(g=>g.time),rawIds,geometry:joint.geometry,assumption:'nearby local interaction, not proven stationary',jointIntersection:true});for(const g of current){g.localEpisode=id;g.spatialAnchors=joint.anchors.map(a=>({...a,time:g.time,localEpisode:id}));}}}current=[];};
   for(const g of observations){if(!current.length){current=[g];continue;}if(g.time-current.at(-1).time<=PARAMETERS.localEpisodeGapMs&&common(current.concat(g)))current.push(g);else{finish();current=[g];}}finish();return episodes;
  }
- function plan(events,options,xmp){const view=eventInterval(events,options),split=splitMotion(activitySegments(view.events,view.T)),attack=xmp?attackConstraints(view.events,options):{constraints:[],excluded:[],received:0},attackTimes=new Map(),windows=[],rateReferences=[],episodes=[];for(const choices of attack.constraints){const time=choices[0].time;if(!attackTimes.has(time))attackTimes.set(time,[]);attackTimes.get(time).push(choices);}
+ function plan(events,options,xmp){const view=eventInterval(events,options),split={parts:activitySegments(view.events,view.T),conflicts:[]},attack=xmp?attackConstraints(view.events,options):{constraints:[],excluded:[],received:0},attackTimes=new Map(),windows=[],rateReferences=[],episodes=[];for(const choices of attack.constraints){const time=choices[0].time;if(!attackTimes.has(time))attackTimes.set(time,[]);attackTimes.get(time).push(choices);}
   for(const [segmentId,part]of split.parts.entries()){const obs=part.groups.filter(g=>g.anchors.length).map(g=>({...g,anchors:collapse(g.anchors)})),local=localEpisodes(obs),refs=obs.slice(1).map((b,i)=>endpointReference(obs[i],b));episodes.push(...local.map(e=>({...e,segmentId})));rateReferences.push(...refs.map(r=>({...r,segmentId})));let cursor=0;
    for(const group of part.groups){while(cursor<obs.length&&obs[cursor].time<group.time)cursor++;const exact=obs[cursor]?.time===group.time,indices=[];if(exact){if(cursor>0)indices.push(cursor-1);if(cursor+1<obs.length)indices.push(cursor);}else if(cursor>0&&cursor<obs.length)indices.push(cursor-1);else indices.push(cursor===0?-1:obs.length-1);
     const contexts=indices.map(i=>{const B=obs[i]?{...obs[i],anchors:obs[i].spatialAnchors||obs[i].anchors}:null,C=obs[i+1]?{...obs[i+1],anchors:obs[i+1].spatialAnchors||obs[i+1].anchors}:null,episode=local.find(e=>group.time>=e.startTime&&group.time<=e.endTime),priorEpisode=local.filter(e=>e.endTime<=group.time).at(-1),available=r=>r&&priorEpisode&&r.fromTime<priorEpisode.startTime&&r.toTime<=priorEpisode.endTime?{...r,state:'unavailable',reason:'new-local-episode'}:r,pre=available(i>0?refs[i-1]:null),post=available(i+1<refs.length?refs[i+1]:null),bracket=available(B&&C?refs[i]:null);const reference=episode?{state:'nearby-local-activity',reason:'overlapping-interaction-sets',refs:[],excluded:[pre,post,bracket].filter(Boolean),localEpisode:episode.id}:selectReference(pre,post,bracket,group.time);return {B,C,reference,contextId:stable([VERSION,segmentId,B?.time??null,C?.time??null,reference.state,reference.mps??null,reference.forward??false,reference.backward??false,reference.refs.map(r=>[r.fromTime,r.toTime,r.kind])])};});
@@ -4056,12 +4945,13 @@ function createTrackerWindows(document, viewport, hooks={}) {
   const t=hooks.t||createTrackerI18n(()=> 'zh-TW',viewport.navigator).t;
   const windows=new Map(),containers=new Map(),KEY='iitc-player-tracker-chatgpt-workspaces-v1';let top=10020,serial=0,restoring=false;
   const saved=(()=>{try{return JSON.parse(viewport.localStorage.getItem(KEY)||'{}');}catch(_){return {};}})();
+  hooks.migrateSaved?.(saved);
   // Normalize legacy overlap IDs without losing tab ownership/order/geometry.
   const renamed=new Map();for(const row of saved.tabs||[])if(row.kind==='overlap'&&Array.isArray(row.members)){const id='overlap:'+JSON.stringify([...new Set(row.members.map(n=>String(n).toLowerCase()))].sort());renamed.set(row.id,id);row.id=id;}for(const c of saved.containers||[]){c.active=renamed.get(c.active)||c.active;c.order=(c.order||[]).map(id=>renamed.get(id)||id);}
   const category=id=>id.startsWith('player:')?'players':'overview';
   const paths={close:'M5 5l14 14M19 5L5 19',minimize:'M5 18h14',maximize:'M5 5h14v14H5z',restore:'M8 8h11v11H8zM5 14V5h9'};
-  function save(){if(restoring)return;try{viewport.localStorage.setItem(KEY,JSON.stringify({version:2,containers:[...containers.values()].map(c=>({id:c.id,x:c.x,y:c.y,width:c.width,height:c.height,maximized:c.maximized,minimized:c.minimized,hidden:c.node.hidden,active:c.active,order:c.order.slice()})),tabs:[...windows.values()].map(w=>({id:w.id,title:w.title,owner:w.owner,player:w.player,kind:w.kind,viewSection:w.viewSection,historicalTime:w.historicalTime,historicalBranch:w.historicalBranch,members:w.members,page:w.page||0,limit:w.limit,scroll:w.scroll||{},summaryRows:w.summaryRows,groupReleased:w.groupReleased}))}));}catch(_){}}
-  function clamp(c){if(c.owner)c=containers.get(c.owner);if(!c)return;const W=viewport.innerWidth,H=viewport.innerHeight,w=Math.max(160,Math.min(c.width,W-12)),h=Math.max(70,Math.min(c.height,H-12));c.x=Math.max(6,Math.min(c.x,W-w-6));c.y=Math.max(6,Math.min(c.y,H-(c.minimized?42:h)-6));Object.assign(c.node.style,{left:(c.maximized?6:c.x)+'px',top:(c.maximized?6:c.y)+'px',width:(c.maximized?W-12:w)+'px',height:c.minimized?'42px':(c.maximized?H-12:h)+'px'});}
+  function save(){if(restoring)return;try{viewport.localStorage.setItem(KEY,JSON.stringify({version:3,navSchema:3,legacyNavigationLayouts:saved.legacyNavigationLayouts,containers:[...containers.values()].map(c=>({id:c.id,x:c.x,y:c.y,width:c.width,height:c.height,maximized:c.maximized,minimized:c.minimized,hidden:c.node.hidden,active:c.active,order:c.order.slice()})),tabs:[...windows.values()].map(w=>({id:w.id,title:w.title,owner:w.owner,player:w.player,kind:w.kind,viewSection:w.viewSection,subpage:w.subpage,expanded:[...(w.expanded||[])],readingAnchor:w.readingAnchor,historicalTime:w.historicalTime,historicalBranch:w.historicalBranch,members:w.members,page:w.page||0,limit:w.limit,scroll:w.scroll||{},summaryRows:w.summaryRows,groupReleased:w.groupReleased}))}));}catch(_){}}
+  function clamp(c){if(c.owner)c=containers.get(c.owner);if(!c)return;const reading=hooks.beforeResize?.(c);const W=viewport.innerWidth,H=viewport.innerHeight,w=Math.max(160,Math.min(c.width,W-12)),h=Math.max(70,Math.min(c.height,H-12));c.x=Math.max(6,Math.min(c.x,W-w-6));c.y=Math.max(6,Math.min(c.y,H-(c.minimized?42:h)-6));Object.assign(c.node.style,{left:(c.maximized?6:c.x)+'px',top:(c.maximized?6:c.y)+'px',width:(c.maximized?W-12:w)+'px',height:c.minimized?'42px':(c.maximized?H-12:h)+'px'});hooks.afterResize?.(reading);}
   function focus(w){const c=w.owner?containers.get(w.owner):w;if(c)c.node.style.zIndex=++top;}
   function icon(kind,label,fn){const b=document.createElement('button');b.type='button';b.title=label;b.setAttribute('aria-label',label);b.className='ptcg-window-icon';b.dataset.windowAction=kind;b.innerHTML=kind==='resize'?'<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="4" y1="16" x2="16" y2="4"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="12" y1="16" x2="16" y2="12"/></g></svg>':'<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="'+paths[kind]+'" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>';b.addEventListener('click',e=>{e.stopPropagation();fn();});return b;}
   function activate(w,persist=true,notify=true){const c=containers.get(w.owner);c.active=w.id;c.node.hidden=false;c.minimized=false;c.content.hidden=false;c.bar.hidden=!!c.standalone;for(const id of c.order){const t=windows.get(id);t.node.hidden=id!==w.id;t.tab.setAttribute('aria-selected',String(id===w.id));t.tab.tabIndex=id===w.id?0:-1;}clamp(c);focus(c);updateTabTools(w);w.tab.scrollIntoView?.({block:'nearest',inline:'nearest'});if(!restoring&&notify)hooks.onActivate?.(w);w.onActivate?.();const scroll=w.scroll?.[w.kind||w.id];if(Number.isFinite(scroll))w.body.scrollTop=scroll;if(persist)save();}
@@ -4082,7 +4972,7 @@ function createTrackerWindows(document, viewport, hooks={}) {
     const w={id,title,node,body,heading:tab,tab,tabItem,owner:cat,minimized:false,scroll:{},...(prior||{})};w.owner=cat;windows.set(id,w);c.order.push(id);c.bar.append(tabItem);c.content.append(node);tab.addEventListener('click',()=>activate(w));const closeButton=icon('close-tab',t("close")+title+t("tab"),()=>close(w));closeButton.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="'+paths.close+'" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>';tabItem.append(closeButton);const detach=document.createElement('button');detach.type='button';detach.className='ptcg-tab-move';detach.dataset.tabMove=w.id;w.detach=detach;detach.addEventListener('click',e=>{e.stopPropagation();move(w,w.owner.startsWith('detached:')?category(w.id):'detached:'+w.id);});tabItem.insertBefore(detach,closeButton);tab.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/x-echotrace-tab',w.id);e.dataTransfer.effectAllowed='move';});
     node.addEventListener('pointerdown',()=>{if(!restoring)hooks.onFocus?.(w);});
     tab.addEventListener('keydown',e=>{const owner=containers.get(w.owner),i=owner.order.indexOf(w.id);if(e.altKey&&['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();move(w,w.owner,Math.max(0,Math.min(owner.order.length-1,i+(e.key==='ArrowRight'?1:-1))));return;}if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const j=e.key==='Home'?0:e.key==='End'?owner.order.length-1:(i+(e.key==='ArrowRight'?1:-1)+owner.order.length)%owner.order.length;const next=windows.get(owner.order[j]);activate(next);next.tab.focus();}if(e.key==='Delete'){e.preventDefault();close(w);}});
-    build(w);if(prior){w.kind=prior.kind||w.kind;w.page=prior.page||0;w.limit=prior.limit||w.limit;w.summaryRows=prior.summaryRows||w.summaryRows;w.groupReleased=!!prior.groupReleased;}body.addEventListener('scroll',()=>{w.scroll[w.kind||w.id]=body.scrollTop;save();},{passive:true});activate(w);updateTabTools(w);return w;
+    build(w);if(prior){w.kind=w.player?'reader':prior.kind||w.kind;w.page=prior.page||0;w.limit=prior.limit||w.limit;w.summaryRows=prior.summaryRows||w.summaryRows;w.groupReleased=!!prior.groupReleased;}body.addEventListener('scroll',()=>{w.scroll[w.kind||w.id]=body.scrollTop;w.readingAnchor=hooks.captureReading?.(w)||w.readingAnchor;save();},{passive:true});activate(w);updateTabTools(w);return w;
   }
   function restoreTabs(build){restoring=true;for(const t of saved.tabs||[])build(t);for(const c of containers.values()){const state=saved.containers?.find(x=>x.id===c.id);if(state){c.order.sort((a,b)=>{const ai=state.order?.indexOf(a)??-1,bi=state.order?.indexOf(b)??-1;return (ai<0?999:ai)-(bi<0?999:bi);});for(const id of c.order){c.bar.append(windows.get(id).tabItem);c.content.append(windows.get(id).node);}const w=windows.get(state.active);if(w&&w.owner===c.id)activate(w,false);c.node.hidden=!!state.hidden||!c.order.length;c.minimized=!!state.minimized;c.content.hidden=c.minimized;c.bar.hidden=c.minimized||c.standalone;clamp(c);}}restoring=false;save();}
   function updateTabTools(w){if(!w.detach)return;const detached=w.owner.startsWith('detached:');w.detach.textContent=detached?'↙':'↗';w.detach.title=t(detached?'redock_tab':'detach_tab');w.detach.setAttribute('aria-label',w.detach.title);w.tab.title=w.title+' · '+t('move_tab');}
@@ -4102,7 +4992,7 @@ function createTrackerCore() {
   const parseNeutralized=typeof parseTrackerNeutralized==='function'?parseTrackerNeutralized:require('./semantics.js').neutralized;
   const isSystem=e=>!!parseSystem(e);
   const teams = { RESISTANCE: 'Resistance', ENLIGHTENED: 'Enlightened', MACHINA: 'Machina', NEUTRAL: '中立／未確認', UNKNOWN: '未知陣營' };
-  const actions = { captured: 'Captured・佔領', deployed: 'Deployed・部署', destroyedResonator: 'Destroyed・摧毀 Resonator', destroyedLink: 'Destroyed・摧毀 Link', destroyedField: 'Destroyed・摧毀 CF', linked: 'Linked・建立 Link', fielded: '建立 CF', upgraded: '升級 Resonator', beacon:'Beacon・部署',battleBeacon:'Battle Beacon・部署',rbb:'Rare Battle Beacon・部署',vrbb:'Very Rare Battle Beacon・部署',fracker:'Portal Fracker・部署',fireworks:'Fireworks・部署',beaconWinner:'Battle Beacon 結果',beaconForecast:'Battle Beacon 預告',neutralized:'Portal 中立化',unknown: '未識別行為' };
+  const actions = { flip:'Manual flip・手動翻轉', captured: 'Captured・佔領', deployed: 'Deployed・部署', destroyedResonator: 'Destroyed・摧毀 Resonator', destroyedLink: 'Destroyed・摧毀 Link', destroyedField: 'Destroyed・摧毀 CF', linked: 'Linked・建立 Link', fielded: '建立 CF', upgraded: '升級 Resonator', beacon:'Beacon・部署',battleBeacon:'Battle Beacon・部署',rbb:'Rare Battle Beacon・部署',vrbb:'Very Rare Battle Beacon・部署',fracker:'Portal Fracker・部署',fireworks:'Fireworks・部署',beaconWinner:'Battle Beacon 結果',beaconForecast:'Battle Beacon 預告',neutralized:'Portal 中立化',unknown: '未識別行為' };
   // Exact allowlist, backed by ingress.com/en/news/2025-plusbeta-anomalysites.
   const NIA_ACCOUNTS = ['niasection14'];
   function role(event) {
@@ -4122,6 +5012,7 @@ function createTrackerCore() {
     return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? [lat, lng] : null;
   }
   function classify(text) {
+    if(/^\s*(?:agent\s+)?used\s+(?:an?\s+|the\s+)?(?:ADA\s+Refactor|JARVIS\s+Virus)\s+(?:on|at)\s*$/i.test(text))return 'flip';
     if (/destroyed\s+(?:(?:the|a|an)\s+)?(?:control\s+)?field\b/i.test(text)) return 'destroyedField';
     if (/destroyed\s+(?:(?:the|a|an)\s+)?link\b/i.test(text)) return 'destroyedLink';
     if (/\blinked\b/i.test(text)) return 'linked';
@@ -4163,7 +5054,7 @@ function createTrackerCore() {
     else if (action !== 'unknown' && portals.length === 1) { position = portals[0].position; quality = position ? 'portal-activity' : 'no-coordinate'; }
     else if (action !== 'unknown') quality = portals.length > 1 ? 'ambiguous-portals' : 'no-coordinate';
     const identity = stable({ time: tuple[1], type: plext.plextType || 'SYSTEM_BROADCAST', player, wireTeam, markup });
-    return { actorKind:system?'system':'player',systemIdentity:system?.identity||null,systemTemplateSupported:system?.supported??null,deviceSubtype:device?.subtype||null,timestampPrecision:plext.timestampPrecision||'source-unspecified', guid: tuple[0], time: tuple[1], receivedAt, source, raw: cached ? null : JSON.parse(JSON.stringify(tuple)), cached, markup, player, wireTeam, team, action, text, portals, position, quality, identity };
+    return { fullText:typeof plext.text==='string'&&plext.text?plext.text:markup.map(m=>String(m?.[1]?.plain??'')).join(''),actorTeam:wireTeam,objectFactions:markup.filter(m=>m[0]==='FACTION').map(m=>({...m[1]})),actorKind:system?'system':'player',systemIdentity:system?.identity||null,systemTemplateSupported:system?.supported??null,deviceSubtype:device?.subtype||null,timestampPrecision:plext.timestampPrecision||'source-unspecified', guid: tuple[0], time: tuple[1], receivedAt, source, raw: cached ? null : JSON.parse(JSON.stringify(tuple)), cached, markup, player, wireTeam, team, action, text, portals, position, quality, identity };
   }
   function fromCache(guid, row, numericTeam) {
     if (!Array.isArray(row)) return null;
@@ -4195,20 +5086,20 @@ function createTrackerCore() {
     return [...groups.values()];
   }
   class Model {
-    constructor() { this.events = new Map(); this.players = new Map(); this.conflicts = new Map(); this.oldest = Infinity; this.newest = -Infinity; }
+    constructor() { this.revision=0;this.events = new Map(); this.players = new Map(); this.conflicts = new Map(); this.oldest = Infinity; this.newest = -Infinity; }
     add(event) {
       const system=parseSystem(event);if(system)event={...event,actorKind:'system',systemIdentity:system.identity,systemTemplateSupported:system.supported,action:system.action,position:null,quality:'structure-only'};
       const old = this.events.get(event.guid);
       if (old) {
         if (old.identity !== event.identity || (old.raw && event.raw && stable(old.raw) !== stable(event.raw))) {
           const id = event.guid + ':' + (event.raw ? stable(event.raw) : event.identity);
-          if (!this.conflicts.has(id)) { const conflict = { id, guid: event.guid, receivedAt: event.receivedAt, original: old, incoming: event }; this.conflicts.set(id, conflict); return { type: 'conflict', conflict }; }
+          if (!this.conflicts.has(id)) { const conflict = { id, guid: event.guid, receivedAt: event.receivedAt, original: old, incoming: event }; this.conflicts.set(id, conflict);this.revision++; return { type: 'conflict', conflict }; }
           return { type: 'duplicate-conflict' };
         }
-        if (!old.raw && event.raw) { this.events.set(event.guid, event); const list = this.players.get(event.player); list[list.indexOf(old)] = event; return { type: 'upgrade', event }; }
+        if (!old.raw && event.raw) {this.revision++; this.events.set(event.guid, event); const list = this.players.get(event.player); list[list.indexOf(old)] = event; return { type: 'upgrade', event }; }
         return { type: 'duplicate' };
       }
-      this.events.set(event.guid, event);
+      this.revision++;this.events.set(event.guid, event);
       if (!this.players.has(event.player)) this.players.set(event.player, []);
       const list = this.players.get(event.player);
       let lo = 0, hi = list.length;
@@ -4248,7 +5139,7 @@ function createTrackerCore() {
       const lastTime = last?.time;
       return { name, events, groups, interactionGroups,segments,activityBreaks,excludedActivityIds,last, latestEvents: events.filter(e => e.time === lastTime), lastGroup, locations: lastGroup ? [...lastGroup.points.values()] : [], role: role(last), team: last?.team || 'UNKNOWN', uncertainLatest: !!last && (!lastGroup || last.time > lastGroup.time || events.some(e => e.time === last.time && !e.position)), ambiguous: !!lastGroup && lastGroup.points.size > 1 };
     }
-    clear() { this.events.clear(); this.players.clear(); this.conflicts.clear(); this.oldest = Infinity; this.newest = -Infinity; }
+    clear() { this.revision++;this.events.clear(); this.players.clear(); this.conflicts.clear(); this.oldest = Infinity; this.newest = -Infinity; }
   }
   function csvCell(value) {
     let s = String(value ?? '');
@@ -4269,10 +5160,10 @@ function createTrackerCore() {
   const cleanup=[];function listenMap(type,fn){window.map.on(type,fn);cleanup.push(()=>window.map.off(type,fn));}function listenDOM(n,type,fn,opts){n.addEventListener(type,fn,opts);cleanup.push(()=>n.removeEventListener(type,fn,opts));}function hook(type,fn){window.addHook(type,fn);cleanup.push(()=>window.removeHook?.(type,fn));}
   const core = createTrackerCore(); // BUILD inserts core definition inside this wrapper.
   const model = api.model = new core.Model();
-  const VERSION = '0.1.1.6', NAME = 'EchoTrace by khresist';
-  const BUILD={"channel":"stable","candidate":"official","sourceCommit":"e72695377b2d2851a18fccb7eaf85d8fabe938ff"};
+  const VERSION = '0.1.1.7', NAME = 'EchoTrace by khresist';
+  const BUILD={"channel":"stable","candidate":"official","sourceCommit":"accepted-dev4-sha256:201bd87bf0a4f850f91b0476162b350cb12e3297d41e3999198dce7792ef8260"};
   const KEY = 'iitc-player-tracker-chatgpt-settings-v1', DB = 'iitc-player-tracker-chatgpt-v1', MIN_ZOOM = 7;
-  const defaults = { names: true, markers: true, factionPinAngle:-120,factionLabelGap:2, labelTime: true, timeMode: 'relative', paths: true, fade: true, hours: 3, pageSize: 10, mode: 'all', selected: '', faction: 'all', watch: [], persist: false, budgetEnabled:false,burstMs:30000,burstPages:30,budgetWindowMs:60000,budgetRequests:60,budgetCooldownMs:30000,storageLimits:false,retentionDays:0,maxRecords:100000,maxMegabytes:100, speed: true, filterPlayer: '', listCategory: 'ordinary', historicalPositions:false,historicalRegions:false,historicalPaths:false,historicalPrimary:'minimum-movement',historicalScenario:'interaction',inferenceSchema:3,inferenceReference:'local-average',startTier:30000,events: true, xmpRadius:168, summaryRows:5, overviewSelection:[], language: 'auto', roleVisibility: {}, selectionVersion:0, selectionOwner:null };
+  const defaults = { names: true, markers: true, factionPinAngle:-120,factionLabelGap:2, labelTime: true, timeMode: 'relative', paths: true, fade: true, hours: 3, pageSize: 10, mode: 'all', selected: '', faction: 'all', watch: [], persist: false, budgetEnabled:false,burstMs:30000,burstPages:30,budgetWindowMs:60000,budgetRequests:60,budgetCooldownMs:30000,storageLimits:false,retentionDays:0,maxRecords:100000,maxMegabytes:100, speed: true, filterPlayer: '', listCategory: 'ordinary', historicalPositions:false,historicalRegions:false,historicalPaths:false,historicalPrimary:'minimum-movement',historicalScenario:'interaction',inferenceSchema:3,inferenceReference:'local-average',startTier:30000,events: true, destroyedLinks:false,xmpRadius:168, summaryRows:5, overviewSelection:[], language: 'auto', roleVisibility: {}, selectionVersion:0, selectionOwner:null,liveAcquisition:false };
   let settings = { ...defaults, watch: [] },localizing=false;
   const artwork=createTrackerArtwork();
   const i18n=createTrackerI18n(()=>settings.language,window.navigator),t=(key,args)=>i18n.t(key,args);
@@ -4288,18 +5179,18 @@ function createTrackerCore() {
   const el = (tag, text, cls) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (cls) n.className = cls; return n; };
   const escape = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const button = (text, fn, cls) => { const n = el('button', text, cls); n.type = 'button'; n.addEventListener('click', fn); return n; };
-  function refreshLabelCatalog(){qualityText={ 'portal-activity': t("observed_portal_activity"), 'link-origin': t("link_origin_interaction"), 'structure-only': t("position_unknown_event_object_endpoint"), 'unknown-action': t("position_unknown_unrecognized_action"), 'no-coordinate': t("position_unknown_missing_coordinates"), 'ambiguous-portals': t("position_unknown_multiple_portals"), 'ambiguous-actor': t("position_unknown_multiple_players") };roleLabels={RES:'RES',ENL:'ENL',MACHINA:'Machina',NIA:'NIA',OTHER:t("unknown_other")};shortActions={neutralized:t('portal_neutralized'),captured:t("capture"),deployed:t("deploy"),destroyedResonator:t("destroy_resonator"),destroyedLink:t("destroy_link"),destroyedField:t("destroy_cf"),linked:t("link"),fielded:t("create_cf"),upgraded:t("upgrade"),beacon:'Beacon',battleBeacon:'Battle Beacon',rbb:'Rare Battle Beacon',vrbb:'Very Rare Battle Beacon',fracker:'Portal Fracker',fireworks:'Fireworks',beaconWinner:t("battle_beacon_result"),beaconForecast:t("battle_beacon_forecast"),unknown:t("other")};categories=[['ordinary',t("players")],['MACHINA','Machina'],['NIA','NIA'],['OTHER',t("unknown_other")],['all',t("all_accounts")]];hourOptions=[[0.5,t("30_minutes")],[1,t("1_hour")],[2,t("2_hours")],[3,t("3_hours")],[6,t("6_hours")],[12,t("12_hours")],[24,t("24_hours")],[168,t("1_week")]];groupNames={capture:t("capture_resonator"),destroy:t("destruction"),link:t("link"),beacon:'Beacon／Battle Beacon',fracker:'Fracker',other:t("other_cf")};}
+  function refreshLabelCatalog(){qualityText={ 'portal-activity': t("observed_portal_activity"), 'link-origin': t("link_origin_interaction"), 'structure-only': t("position_unknown_event_object_endpoint"), 'unknown-action': t("position_unknown_unrecognized_action"), 'no-coordinate': t("position_unknown_missing_coordinates"), 'ambiguous-portals': t("position_unknown_multiple_portals"), 'ambiguous-actor': t("position_unknown_multiple_players") };roleLabels={RES:'RES',ENL:'ENL',MACHINA:'Machina',NIA:'NIA',OTHER:t("unknown_other")};shortActions={flip:t('manual_flip'),neutralized:t('portal_neutralized'),captured:t("capture"),deployed:t("deploy"),destroyedResonator:t("destroy_resonator"),destroyedLink:t("destroy_link"),destroyedField:t("destroy_cf"),linked:t("link"),fielded:t("create_cf"),upgraded:t("upgrade"),beacon:'Beacon',battleBeacon:'Battle Beacon',rbb:'Rare Battle Beacon',vrbb:'Very Rare Battle Beacon',fracker:'Portal Fracker',fireworks:'Fireworks',beaconWinner:t("battle_beacon_result"),beaconForecast:t("battle_beacon_forecast"),unknown:t("other")};categories=[['ordinary',t("players")],['MACHINA','Machina'],['NIA','NIA'],['OTHER',t("unknown_other")],['all',t("all_accounts")]];hourOptions=[[0.5,t("30_minutes")],[1,t("1_hour")],[2,t("2_hours")],[3,t("3_hours")],[6,t("6_hours")],[12,t("12_hours")],[24,t("24_hours")]];groupNames={capture:t("capture_resonator"),destroy:t("destruction"),link:t("link"),beacon:'Beacon／Battle Beacon',fracker:'Fracker',other:t("other_cf")};}
   function saveSettings() {coordinator?.announce(); try { localStorage.setItem(KEY, JSON.stringify(settings)); messages.settingsError=()=>''; } catch (e) { messages.settingsError=()=>t("settings_could_not_be_saved") + i18n.status(e.message); } }
   function loadSettings() {
     try {
       const s = JSON.parse(localStorage.getItem(KEY) || '{}');
-      for (const k of ['names', 'markers', 'labelTime', 'paths', 'fade', 'persist', 'speed', 'events','budgetEnabled','storageLimits']) if (typeof s[k] === 'boolean') settings[k] = s[k];
+      for (const k of ['liveAcquisition','names', 'markers', 'labelTime', 'paths', 'fade', 'persist', 'speed', 'events','destroyedLinks','budgetEnabled','storageLimits']) if (typeof s[k] === 'boolean') settings[k] = s[k];
       for(const key of ['burstMs','burstPages','budgetWindowMs','budgetRequests','budgetCooldownMs','retentionDays','maxRecords','maxMegabytes'])if(Number.isFinite(s[key])&&s[key]>=0)settings[key]=s[key];
-      const prior=s.predictionSchema===1&&s.prediction===true;settings.historicalPositions=s.inferenceSchema>=2?!!s.historicalPositions:prior;settings.historicalRegions=s.inferenceSchema>=2?!!s.historicalRegions:prior;settings.inferenceReference=['local-average','minimum-movement','both'].includes(s.inferenceReference)?s.inferenceReference:'local-average';
-      settings.historicalPaths=typeof s.historicalPaths==='boolean'?s.historicalPaths:s.inferenceSchema>=2&&(!!s.historicalPositions||!!s.historicalRegions);settings.historicalPrimary=['local-average','minimum-movement'].includes(s.historicalPrimary)?s.historicalPrimary:'minimum-movement';settings.historicalScenario=s.historicalScenario==='XMP'?'XMP':'interaction';
+      settings.historicalPositions=typeof s.historicalPositions==='boolean'?s.historicalPositions:false;settings.historicalRegions=typeof s.historicalRegions==='boolean'?s.historicalRegions:false;settings.inferenceReference=['local-average','minimum-movement','both'].includes(s.inferenceReference)?s.inferenceReference:'local-average';
+      settings.historicalPaths=typeof s.historicalPaths==='boolean'?s.historicalPaths:false;settings.historicalPrimary=['local-average','minimum-movement'].includes(s.historicalPrimary)?s.historicalPrimary:'minimum-movement';settings.historicalScenario=s.historicalScenario==='XMP'?'XMP':'interaction';
       if([500,800,1000,3000,5000,10000,30000,60000,180000,300000].includes(s.startTier))settings.startTier=s.startTier;
       for(const key of ['inference','inferredPaths','xmp','modelCap','modelSpeedCap'])delete s[key];
-      if (Number.isFinite(s.hours)&&s.hours>0) settings.hours = s.hours;
+      if (Number.isFinite(s.hours)&&s.hours>0) settings.hours = Math.min(24,s.hours);if(s.hours>24)settings.mapHoursClamped=true;
       if([3,5,10].includes(s.summaryRows))settings.summaryRows=s.summaryRows;
       if(Number.isFinite(s.xmpRadius)&&s.xmpRadius>0&&s.xmpRadius<=2000)settings.xmpRadius=s.xmpRadius;
       if ([10, 20, 40].includes(s.pageSize)) settings.pageSize = s.pageSize;
@@ -4321,7 +5212,7 @@ function createTrackerCore() {
   function time(t,absolute=false){return absolute||settings.timeMode==='absolute'?clockText.absolute(t):clockText.relative(t,observationT);}
   api.formatTime=(t,absolute=false)=>time(t,absolute);api.timeZone=clockText.zone;
   let liveObservation=true,observationRevision=0;
-  api.setObservationTime=t=>{observationRevision++;liveObservation=t===null;if(!liveObservation&&!Number.isSafeInteger(t))throw Error('invalid observation time');observationT=liveObservation?Date.now():t;acquisition?.scopeChanged();syncObservationInputs();requestRender(true);};
+  api.setObservationTime=t=>{if(historySession?.snapshot().active)return false;observationRevision++;liveObservation=t===null;if(!liveObservation&&!Number.isSafeInteger(t))throw Error('invalid observation time');observationT=liveObservation?Date.now():t;acquisition?.scopeChanged();syncObservationInputs();requestRender(true);};
   api.observationState=()=>({live:liveObservation,T:observationT,zone:clockText.zone});
   let mapScope={kind:'overview',player:''};
   function scopeIncludes(name,scope=mapScope){const ids=scope.kind==='player'?[scope.player]:settings.overviewSelection;return !ids.length||ids.some(id=>id.toLowerCase()===name.toLowerCase());}
@@ -4332,12 +5223,14 @@ function createTrackerCore() {
   function manualSelection(names){settings.selectionVersion++;settings.selectionOwner=null;settings.overviewSelection=names;saveSettings();if(mapScope.kind==='overview')requestRender(true);renderDashboard();}
   function workspaceActivated(w){if(w.player)setMapScope({kind:'player',player:w.player});else if(w.kind==='overlap'){ownGroup(w);setMapScope({kind:'overview',player:''});requestRender(true);renderDashboard();}else if(w.id==='dashboard')setMapScope({kind:'overview',player:''});}
   function workspaceFocused(w){if(w.player)setMapScope({kind:'player',player:w.player});else if(w.id==='dashboard'||w.kind==='overlap'&&!w.groupReleased)setMapScope({kind:'overview',player:''});}
-  function workspaceHidden(c){const owner=wm.get(settings.selectionOwner?.id);if(owner?.owner===c.id)releaseGroup(owner);}
-  function workspaceClosed(w,wasActive,next){releaseGroup(w);if(w.player&&wasActive&&mapScope.kind==='player'&&mapScope.player===w.player){setMapScope(next?.player?{kind:'player',player:next.player}:{kind:'overview',player:''});}}
+  function playerContexts(){return [...wm.windows.values()].filter(w=>(w.player||w.kind==='overlap')&&!wm.containers.get(w.owner)?.node.hidden);}
+  function reconcilePlayerContexts(){const open=playerContexts();if(open.length){if(mapScope.kind==='player'&&!open.some(w=>w.player===mapScope.player)){const other=open.find(w=>w.player);setMapScope(other?{kind:'player',player:other.player}:{kind:'overview',player:''});}return;}settings.selectionOwner=null;settings.selectionVersion++;settings.overviewSelection=[];settings.filterPlayer='';settings.mode='all';for(const w of wm.windows.values())if(w.kind==='overlap')w.groupReleased=true;setMapScope({kind:'overview',player:''});saveSettings();wm.save();requestRender(true);renderDashboard();}
+  function workspaceHidden(c){if(c.order.some(id=>{const w=wm.get(id);return w?.player||w?.kind==='overlap';}))reconcilePlayerContexts();}
+  function workspaceClosed(w,wasActive,next){if(!w.player&&w.kind!=='overlap')return;const open=playerContexts();if(!open.length){reconcilePlayerContexts();return;}if(settings.selectionOwner?.id===w.id){const group=open.find(x=>x.kind==='overlap');if(group)ownGroup(group);else{settings.selectionOwner=null;saveSettings();}}if(mapScope.kind==='player'&&!open.some(x=>x.player===mapScope.player)){const other=next?.player?next:open.find(x=>x.player);setMapScope(other?{kind:'player',player:other.player}:{kind:'overview',player:''});}}
   function toggleOverview(name){const key=name.toLowerCase(),has=settings.overviewSelection.some(n=>n.toLowerCase()===key);manualSelection(has?settings.overviewSelection.filter(n=>n.toLowerCase()!==key):settings.overviewSelection.concat(name));}
 
   api.mapScope=()=>({...mapScope,overviewSelection:settings.overviewSelection.slice(),visiblePlayers:[...model.players.keys()].filter(n=>{const v=sharedView(n);return matches(n,v)&&window.map.hasLayer(layers[v.role]);})});
-  function color(name, team) { return roleColors[core.role({player:name,team})]; }
+  function color(name, team) { const role=core.role({player:name,team});return displayModel.playerColor(name,role,roleColors[role]); }
   function snapshot() {
     return { version: VERSION, records: model.events.size, players: model.players.size, saved: persisted.size, conflicts: model.conflicts.size, savedConflicts: savedConflicts.size, oldest: Number.isFinite(model.oldest) ? model.oldest : null, newest: Number.isFinite(model.newest) ? model.newest : null, storageState:messages.storageState, storageError:messages.storageError, settingsError:messages.settingsError, cacheWarning:messages.cacheWarning, counters: { ...counters }, accountCounts: accountCounts() };
   }
@@ -4349,7 +5242,7 @@ function createTrackerCore() {
   async function restore(){const data=await activityStore.read();dataGeneration=data.generation;
     const events=data.records.map(row=>row.raw?core.parse(row.raw,row.source,row.receivedAt):row).filter(Boolean);accept(events,{epoch:dataGeneration,saved:true});for(const c of data.conflicts){model.conflicts.set(c.id,c);savedConflicts.add(c.id);}for(const scope of data.observationScopes)activityStore.addScope(scope,true);
     let legacy=[];try{legacy=JSON.parse(localStorage.getItem(KEY+'-acquisition-scopes')||'[]');}catch(_){}if(Array.isArray(legacy))for(const scope of legacy)activityStore.addScope({...scope,source:scope.source||'legacy-scope',coverage:'unknown'},true);
-    restoreAcquisitionState();if(settings.persist&&legacy.length){enqueue([],[],activityStore.allScopes());chain.then(async()=>{const d=await activityStore.read();if(d.observationScopes.length)localStorage.removeItem(KEY+'-acquisition-scopes');}).catch(()=>{});}
+    restoreAcquisitionState();initBacktrack();if(settings.persist&&legacy.length){enqueue([],[],activityStore.allScopes());chain.then(async()=>{const d=await activityStore.read();if(d.observationScopes.length)localStorage.removeItem(KEY+'-acquisition-scopes');}).catch(()=>{});}
   }
   function restoreAcquisitionState(){const state={checkpoints:[],historyTasks:[],gaps:[]};for(const s of activityStore.allScopes()){if(!s.bounds)continue;const scope=JSON.stringify(s.bounds)+'|'+(s.live?'live':'fixed:'+s.upper);if(s.checkpoint)state.checkpoints.push([scope,s.checkpoint]);if(s.gaps)state.gaps.push(...s.gaps);if(s.intent==='history')state.historyTasks.push([JSON.stringify([s.bounds,s.lower,s.upper]),{target:{bounds:s.bounds,upper:s.upper,lower:s.lower,live:s.live,key:scope},cursor:s.cursor,complete:s.complete,transportCovered:s.coverage==='query-boundary',seen:s.ids.map(id=>id+'|'+model.events.get(id)?.time),state:s.state}]);}acquisition?.restoreState(state);}
   function accept(events,meta={}) {
@@ -4398,9 +5291,9 @@ function createTrackerCore() {
   function schedule(all=false){if(liveObservation)observationT=Date.now();requestRender(all);}
   let roleLabels={RES:'RES',ENL:'ENL',MACHINA:'Machina',NIA:'NIA',OTHER:t("unknown_other")};
   const roleColors={RES:'#75c8ff',ENL:'#80ef98',MACHINA:'#ff8585',NIA:'#dfb2ff',OTHER:'#d7dce4'};
-  let shortActions={neutralized:t('portal_neutralized'),captured:t("capture"),deployed:t("deploy"),destroyedResonator:t("destroy_resonator"),destroyedLink:t("destroy_link"),destroyedField:t("destroy_cf"),linked:t("link"),fielded:t("create_cf"),upgraded:t("upgrade"),beacon:'Beacon',battleBeacon:'Battle Beacon',rbb:'Rare Battle Beacon',vrbb:'Very Rare Battle Beacon',fracker:'Portal Fracker',fireworks:'Fireworks',beaconWinner:t("battle_beacon_result"),beaconForecast:t("battle_beacon_forecast"),unknown:t("other")};
+  let shortActions={flip:t('manual_flip'),neutralized:t('portal_neutralized'),captured:t("capture"),deployed:t("deploy"),destroyedResonator:t("destroy_resonator"),destroyedLink:t("destroy_link"),destroyedField:t("destroy_cf"),linked:t("link"),fielded:t("create_cf"),upgraded:t("upgrade"),beacon:'Beacon',battleBeacon:'Battle Beacon',rbb:'Rare Battle Beacon',vrbb:'Very Rare Battle Beacon',fracker:'Portal Fracker',fireworks:'Fireworks',beaconWinner:t("battle_beacon_result"),beaconForecast:t("battle_beacon_forecast"),unknown:t("other")};
   let categories=[['ordinary',t("players")],['MACHINA','Machina'],['NIA','NIA'],['OTHER',t("unknown_other")],['all',t("all_accounts")]];
-  let hourOptions=[[0.5,t("30_minutes")],[1,t("1_hour")],[2,t("2_hours")],[3,t("3_hours")],[6,t("6_hours")],[12,t("12_hours")],[24,t("24_hours")],[168,t("1_week")]];
+  let hourOptions=[[0.5,t("30_minutes")],[1,t("1_hour")],[2,t("2_hours")],[3,t("3_hours")],[6,t("6_hours")],[12,t("12_hours")],[24,t("24_hours")]];
   let wm,exportScope='all',exportCategory='ordinary',refreshBusy=false,acquisition=null,displayTimer=null,disposed=false,nativeDeferred=[],nativeFlushTimer=null;
   const nativeAjax=new Set(),ownAjax=new WeakSet();let ownDispatch=false;
   let clusterLayer;const clusterRecords=new Map();
@@ -4412,7 +5305,7 @@ function createTrackerCore() {
   function factionBadge(role){const n=el('span',undefined,'ptcg-faction-badge');n.innerHTML=artwork.emblem(role);return n;}
   function roleStyle(n,v){n.style.color=roleColors[v.role];if(['RES','ENL'].includes(v.role)&&!n.querySelector('.ptcg-faction-emblem'))n.prepend(factionBadge(v.role));return n;}
   function briefStatus(){const p=[];if(window.map.getZoom()<MIN_ZOOM)p.push(t("zoom_to_level_7"));if(messages.storageError)p.push(t("storage_failed"));else p.push(settings.persist?messages.storageState:t("new_activity_stays_in_this_page"));if(messages.settingsError)p.push(t("settings_save_failed"));if(model.conflicts.size)p.push(t("source_conflicts")+model.conflicts.size);if(messages.cacheWarning)p.push(t("awaiting_comm_update"));return p.join(' · ');}
-  function refreshPublic(){if(!acquisition){messages.refreshText=()=>t("public_comm_interface_unavailable");requestRender();return false;}const player=mapScope.kind==="player"?mapScope.player:null,before=player?sharedView(player).events.map(e=>e.guid):null;acquisition.request('manual').then(r=>{messages.refreshText=()=>(i18n.status(r.text)||t("no_update_received"))+(r.complete&&before&&!sharedView(player).events.some(e=>!before.includes(e.guid))?t("no_new_activity_for_this_player"):'');requestRender();});return true;}
+  function refreshPublic(){if(historySession?.snapshot().active){messages.refreshText=()=>t('history_live_paused');requestRender();return false;}if(!acquisition){messages.refreshText=()=>t("public_comm_interface_unavailable");requestRender();return false;}const player=mapScope.kind==="player"?mapScope.player:null,before=player?sharedView(player).events.map(e=>e.guid):null;acquisition.request('manual').then(r=>{messages.refreshText=()=>(i18n.status(r.text)||t("no_update_received"))+(r.complete&&before&&!sharedView(player).events.some(e=>!before.includes(e.guid))?t("no_new_activity_for_this_player"):'');requestRender();});return true;}
   api.refresh=refreshPublic;
   function acquisitionTarget(){const b=window.map.getBounds(),sw=b.getSouthWest(),ne=b.getNorthEast(),lat=n=>Math.round(Math.max(-90,Math.min(90,n))*1e6),lng=n=>Math.round(Math.max(-180,Math.min(180,n))*1e6);return {bounds:{minLatE6:lat(sw.lat),minLngE6:lng(sw.lng),maxLatE6:lat(ne.lat),maxLngE6:lng(ne.lng)},live:liveObservation,upper:observationT,lower:observationT-settings.hours*3600000};}
   function updateAcquisitionPause(){const reason=!window.map.hasLayer(masterLayer)?'總開關已關閉':document.hidden?'頁面隱藏':window.isIdle?.()?'頁面閒置':window.map.getZoom()<MIN_ZOOM?'請放大至 7 級':'';acquisition?.setPause(reason);}
@@ -4425,7 +5318,7 @@ function createTrackerCore() {
     ingest:(data,scope)=>{const before=counters.accepted;handle({channel:'all',result:data.result},{epoch:dataGeneration,scope,source:'plugin-acquisition'});return counters.accepted-before;},
     complete:(c,complete)=>{const cp=c.kind==='history'?null:acquisition.snapshot().checkpoints.find(([key])=>key===c.target.key)?.[1],ids=[...c.seen].map(x=>x.slice(0,x.lastIndexOf('|')));const row=activityStore.addScope({bounds:c.target.bounds,upper:c.target.upper,lower:c.target.lower,live:c.target.live,intent:c.kind,source:'plugin-acquisition',state:c.state||'partial-gap',gaps:acquisition.snapshot().gaps.filter(g=>g.scope===c.target.key).slice(-200),complete,query:c.requestQuery,requestId:String(c.requestId),coverage:c.crossed?'query-boundary':'unknown',cursor:c.cursor,ids,checkpoint:cp,receivedAt:Date.now()});if(row)enqueue([],[],[row]);},
     change:s=>{if(!coordinator.snapshot().owner.length)flushNative();refreshBusy=s.headBusy;messages.refreshText=()=>i18n.status(s.text);historyBusy=s.intent==='history'||!!s.suspendedHistory||!!s.historyQueued;if(historyBusy)messages.historyText=()=>s.historyQueued?t('history_queued'):i18n.status(s.text);historyPages=s.history?.pages||0;requestRender();}});
-    Object.defineProperty(api,'acquisitionScopes',{get:()=>activityStore.allScopes()});api.acquisitionState=()=>({...acquisition.snapshot(),coordination:coordinator.snapshot()});api.setAutoRefresh=on=>{updateAcquisitionPause();acquisition.enable(on);};api.recoverAcquisition=async()=>{await coordinator.recover();acquisition.recover();requestRender();};
+    Object.defineProperty(api,'acquisitionScopes',{get:()=>activityStore.allScopes()});api.acquisitionState=()=>({...acquisition.snapshot(),coordination:coordinator.snapshot()});api.setAutoRefresh=on=>{settings.liveAcquisition=!!on;saveSettings();updateAcquisitionPause();if(historySession)historySession.choice(on);else acquisition.enable(on);};acquisition.enable(settings.liveAcquisition);api.recoverAcquisition=async()=>{await coordinator.recover();acquisition.recover();requestRender();};
     if(typeof window.jQuery==='function'){
       const publicPayload=o=>{try{if(!/\/r\/getPlexts(?:\?|$)/.test(o.url))return null;const p=o.context?.tab?o.context:JSON.parse(o.data||'{}');return p.tab==='all'?p:null;}catch(_){return null;}};
       window.jQuery(document).on('ajaxSend.ptAdvanced',(_event,xhr,o)=>{const p=publicPayload(o);if(p){if(disposed)return;if(ownDispatch){ownAjax.add(xhr);return;}nativeGenerations.set(xhr,{epoch:dataGeneration,account:String(window.PLAYER?.nickname||'').toLowerCase(),params:p,startedAt:Date.now()});nativeAjax.add(xhr);coordinator.native(true);acquisition.nativeStart(xhr,p);}});
@@ -4444,14 +5337,17 @@ function createTrackerCore() {
   function numberSetting(title,key,min,max,onChange){const label=el('label',title,'ptcg-field'),input=el('input');input.type='number';input.min=min;input.max=max;input.step=1;input.value=settings[key];input.dataset.setting=key;input.addEventListener('input',()=>{input.dataset.draft='1';});input.addEventListener('change',()=>{if(localizing)return;delete input.dataset.draft;const n=Number(input.value);if(!Number.isFinite(n)||n<min||n>max){input.value=settings[key];return;}settings[key]=n;saveSettings();onChange?.();requestRender();});label.append(input);return label;}
   function buildAuto(w){const toggle=el('label',undefined,'ptcg-check'),on=el('input');on.type='checkbox';on.dataset.autoRefresh='1';on.addEventListener('change',()=>api.setAutoRefresh(on.checked));toggle.append(on,document.createTextNode(t("auto_refresh")));const tier=field(t("initial_interval"),'startTier',[[500,'500ms'],[800,'800ms'],[1000,'1s'],[3000,'3s'],[5000,'5s'],[10000,'10s'],[30000,'30s'],[60000,'1m'],[180000,'3m'],[300000,'5m']],()=>acquisition.setTier(settings.startTier)),summary=el('div');summary.dataset.acquisitionSummary='1';w.body.append(toggle,tier,summary,button(t("resume_acquisition"),()=>api.recoverAcquisition().catch(e=>{messages.refreshText=()=>t("could_not_resume")+i18n.status(e.message);requestRender();})),el('small',t("use_after_restoring_sign_in_existing_backoff_remains_auto_refresh")),checkbox(t("enable_request_budget"),'budgetEnabled'),numberSetting(t("fast_request_duration_ms"),'burstMs',500,3600000),numberSetting(t("fast_request_pages"),'burstPages',1,10000),numberSetting(t("rolling_window_ms"),'budgetWindowMs',1000,86400000),numberSetting(t("requests_per_window"),'budgetRequests',1,10000),numberSetting(t("budget_cooldown_ms"),'budgetCooldownMs',500,86400000),el('small',t("budget_defaults_off_enabling_it_delays_catch_up_and_retains_curso")));
   }
-  function renderAuto(){const w=wm.get('auto');if(!w||!acquisition)return;const s=api.acquisitionState(),shared=s.coordination,on=w.body.querySelector('[data-auto-refresh]');on.checked=s.enabled;w.body.querySelector('[data-acquisition-summary]').replaceChildren(el('p',i18n.status(s.text)+' · '+s.tier+' ms'),el('p',t("batch_rows")+(s.rawCount??'—')+t("newly_accepted")+(s.newAccepted??'—')),el('p',t("current_request")+time(s.lastStart,true)),el('p',t("last_completion")+time(s.lastSuccess,true)),el('p',t("next")+time(Math.max(s.nextAttempt||0,shared.nextAttempt||0)||null,true)),el('p',t("progress")+(s.progress?t('progress_'+s.progress):t("unconfirmed"))+' · '+i18n.status(shared.reason||s.text)),el('small',shared.mode==='web-locks'?t("shared_across_same_origin_tabs"):t("single_tab_acquisition_other_pages_must_wait")),el('p',t("latest_event")+time(s.latestEvent,true)),el('small',t("time_zone")+clockText.zone));}
-  function render(){renderHistorySummary();
-    if(!wm)return;
-    const names=fullRedraw?new Set([...model.players.keys(),...drawn.keys()]):dirty;
-    for(const name of names)drawPlayer(name);
-    dirty=new Set();fullRedraw=false;drawClusters();drawEvents();drawInferences();counters.renderedPlayers=drawn.size;updateFollow();
+  function renderAuto(){renderMapIntervals();const w=wm.get('auto');if(!w||!acquisition||!w.body.querySelector('[data-auto-refresh]'))return;const s=api.acquisitionState(),shared=s.coordination,primary=w.body.querySelector('[data-live-primary]');if(primary)primary.textContent=i18n.status(s.text)+' · '+t('batch_rows')+(s.rawCount??'—')+' · '+t('newly_accepted')+(s.newAccepted??'—');const on=w.body.querySelector('[data-auto-refresh]');on.checked=historySession?.snapshot().active?historySession.snapshot().restoreAuto:s.enabled;w.body.querySelector('[data-acquisition-summary]').replaceChildren(el('p',i18n.status(s.text)+' · '+s.tier+' ms'),el('p',t("batch_rows")+(s.rawCount??'—')+t("newly_accepted")+(s.newAccepted??'—')),el('p',t("current_request")+time(s.lastStart,true)),el('p',t("last_completion")+time(s.lastSuccess,true)),el('p',t("next")+time(Math.max(s.nextAttempt||0,shared.nextAttempt||0)||null,true)),el('p',t("progress")+(s.progress?t('progress_'+s.progress):t("unconfirmed"))+' · '+i18n.status(shared.reason||s.text)),el('small',shared.mode==='web-locks'?t("shared_across_same_origin_tabs"):t("single_tab_acquisition_other_pages_must_wait")),el('p',t("latest_event")+time(s.latestEvent,true)),el('small',t("time_zone")+clockText.zone));}
+  let graphicSignature=null,nextGraphicBoundary=-Infinity;
+  function eventAge(at,floor=.30){return presentation.age(at,observationT,settings.hours,settings.fade,floor);}
+  function updateAges(){for(const l of clusterLayer.getLayers()){if(Number.isFinite(l.options.ptcgSourceTime))l.setOpacity(eventAge(l.options.ptcgSourceTime));for(const n of l._icon?.querySelectorAll('[data-map-time]')||[])n.textContent=time(Number(n.dataset.mapTime));}for(const l of eventLayer.getLayers()){if(!Number.isFinite(l.options.ptcgSourceTime))continue;const opacity=(l.options.ptcgBaseOpacity??1)*eventAge(l.options.ptcgSourceTime);if(l.setOpacity)l.setOpacity(opacity);else l.setStyle?.({opacity});}for(const g of drawn.values())for(const l of g.getLayers())if(Number.isFinite(l.options.ptcgSourceTime))l.setStyle({opacity:eventAge(l.options.ptcgSourceTime,l.options.ptcgAgeFloor??.28)});for(const n of document.querySelectorAll('.ptcg-hover [data-event-time]'))n.textContent=time(Number(n.dataset.eventTime));}
+  function render(){renderHistorySummary();if(!wm)return;
+    const signature=JSON.stringify([model.revision,observationRevision,settings,mapScope,window.map.getZoom(),window.map.hasLayer(masterLayer),Object.values(layers).map(l=>window.map.hasLayer(l))]);
+    if(!fullRedraw&&signature===graphicSignature&&observationT<nextGraphicBoundary){updateAges();dirty=new Set();}else{
+      const names=fullRedraw||signature!==graphicSignature?new Set([...model.players.keys(),...drawn.keys()]):dirty;for(const name of names)drawPlayer(name);dirty=new Set();fullRedraw=false;drawClusters();drawEvents();drawInferences();counters.renderedPlayers=drawn.size;graphicSignature=signature;nextGraphicBoundary=Infinity;for(const e of model.events.values())for(const at of [e.time,e.time+settings.hours*3600000+1,e.time+360000])if(at>observationT)nextGraphicBoundary=Math.min(nextGraphicBoundary,at);
+    }updateFollow();
     for(const w of wm.windows.values())if(!w.node.hidden&&!w.minimized){
-      if(w.kind==='reader')renderReader(w);else if(w.kind==='detail')renderDetail(w);else if(w.id==='dashboard')renderDashboard();else if(w.id==='auto')renderAuto();else if(w.id==='storage')updateStorageSummary();else if(w.id==='export')updateExportPreview();else if(w.kind==='overlap')renderOverlap(w);
+      if(w.player)renderReader(w);else if(w.id==='dashboard')renderDashboard();else if(w.id==='acquisition'){renderAuto();updateBacktrackUI();}else if(w.id==='data'){updateStorageSummary();updateExportPreview();}else if(w.kind==='overlap')renderOverlap(w);
     }
     playerRefreshHeader();for(const b of document.querySelectorAll('[data-workspace-refresh]')){b.disabled=refreshBusy;b.title=messages.refreshText;}
     for(const n of document.querySelectorAll('.ptcg-window [data-setting]')){if(document.activeElement===n||n.dataset.draft==='1')continue;const k=n.dataset.setting;if(n.type==='checkbox')n.checked=settings[k];else{if(k==='hours'&&![...n.options].some(o=>Number(o.value)===settings.hours)){const o=el('option',settings.hours+t("hours"));o.value=settings.hours;n.append(o);}n.value=settings[k];}}
@@ -4459,41 +5355,91 @@ function createTrackerCore() {
   function canonical(name){return [...model.players.keys()].find(n=>n.toLowerCase()===String(name).toLowerCase())||String(name);}
   function locate(name){return playerWindow(name,'reader');}
   api.locatePlayer=locate;
-  function openPanel(id='dashboard'){
-    if(id==='players')id='dashboard';
-    const titles={dashboard:t("overview"),settings:t("display_settings"),storage:t("storage"),export:t("csv_export"),about:t("about"),auto:t("auto_refresh")};
-    if(!titles[id])return null;
-    const builders={dashboard:buildDashboard,settings:buildSettings,storage:buildStorage,export:buildExport,about:buildAbout,auto:buildAuto};
-    const existing=wm.get(id),w=wm.open(id,titles[id],builders[id],id==='dashboard'?490:460,590);
-    if(existing&&id==='settings'){w.body.replaceChildren();buildSettings(w);}render();return w;
+  let backtrack=null,backtrackArchive=null,backtrackArchiveChain=Promise.resolve(),backtrackSaveError='',backtrackArchiveBytes=0,backtrackArchiveTx=null,backtrackPolicy=0;
+  const BACKTRACK_KEY=KEY+'-backtrack';
+  async function archiveDB(){if(backtrackArchive)return backtrackArchive;backtrackArchive=await new Promise((resolve,reject)=>{const q=indexedDB.open(DB+'-backtrack',1);q.onupgradeneeded=()=>q.result.createObjectStore('pages');q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});const rows=await new Promise((resolve,reject)=>{const q=backtrackArchive.transaction('pages').objectStore('pages').getAll();q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});backtrackArchiveBytes=rows.reduce((n,r)=>n+JSON.stringify(r).length*2,0);return backtrackArchive;}
+  function archivePage(id,index,page){if(!settings.persist)return;const epoch=dataGeneration,policy=backtrackPolicy;backtrackArchiveChain=backtrackArchiveChain.then(async()=>{await coordinator.whenTransportIdle();await chain;if(epoch!==dataGeneration||policy!==backtrackPolicy||!settings.persist)return;const db=await archiveDB(),entry={session:id,index,page,epoch},bytes=JSON.stringify(entry).length*2;if(settings.storageLimits){const data=await activityStore.read(),activityBytes=[...data.records,...data.conflicts,...data.observationScopes].reduce((n,r)=>n+JSON.stringify(r).length*2,0);if(settings.maxMegabytes>0&&activityBytes+backtrackArchiveBytes+bytes>settings.maxMegabytes*1048576||settings.maxRecords>0&&new Set(data.records.map(e=>e.guid).concat((page.response?.result||[]).filter(r=>typeof r?.[0]==='string').map(r=>r[0]))).size>settings.maxRecords)throw Error(t('backtrack_archive_capacity'));}if(epoch!==dataGeneration||policy!==backtrackPolicy||!settings.persist)return;await new Promise((resolve,reject)=>{const tx=backtrackArchiveTx=db.transaction('pages','readwrite');tx.objectStore('pages').put(entry,id+':'+index);tx.oncomplete=()=>{backtrackArchiveTx=null;backtrackArchiveBytes+=bytes;resolve();};tx.onabort=tx.onerror=()=>{backtrackArchiveTx=null;reject(tx.error||Error(t('backtrack_archive_cancelled')));};});}).catch(e=>{backtrackSaveError=t('backtrack_archive_failed')+': '+e.message;updateBacktrackUI();});}
+  async function exportBacktrack(){const epoch=dataGeneration,state=backtrack.snapshot(),memory=backtrack.rawPages().slice();await backtrackArchiveChain;let saved=[];if(settings.persist){const db=await archiveDB();saved=await new Promise((resolve,reject)=>{const q=db.transaction('pages').objectStore('pages').getAll();q.onsuccess=()=>resolve(q.result.filter(r=>r.epoch===epoch&&r.session===state.id).sort((a,b)=>a.index-b.index).map(r=>r.page));q.onerror=()=>reject(q.error);});}if(epoch!==dataGeneration)throw Error(t('backtrack_reason_cleared'));return {format:'echotrace-backtrack-1',version:VERSION,session:state,scope:'raw public COMM responses; server completeness unknown',pages:[...new Map(saved.concat(memory).map(p=>[JSON.stringify([p.query,p.at,p.error||null]),p])).values()]};}
+  async function downloadBacktrack(){try{const data=await exportBacktrack(),url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'})),a=el('a');a.href=url;a.download='echotrace-'+VERSION+'-historical-raw.json';a.click();const timer=setTimeout(()=>URL.revokeObjectURL(url),60000);cleanup.push(()=>{clearTimeout(timer);URL.revokeObjectURL(url);});}catch(e){backtrackSaveError=t('backtrack_archive_failed')+': '+e.message;updateBacktrackUI();}}
+
+  function initBacktrack(){initHistorySession();initCapture();if(settings.persist)archiveDB().catch(e=>{backtrackSaveError=t('backtrack_archive_failed')+': '+e.message;});backtrack=createTrackerBacktrack({generation:()=>dataGeneration,send:(...a)=>coordinator.submit(...a),wait:()=>!ready?'backtrack_reason_loading':clearing?'backtrack_reason_cleared':document.hidden?'backtrack_reason_hidden':!window.map.hasLayer(masterLayer)?'backtrack_reason_layer':window.map.getZoom()<MIN_ZOOM?'backtrack_reason_zoom':window.isIdle?.()?'backtrack_reason_idle':null,
+    ingest:(data,scope)=>{const times=data.result.filter(r=>Number.isSafeInteger(r?.[1])&&r[1]<=observationT&&r[1]>=observationT-86400000).map(r=>r[1]);if(times.length){settings.hours=Math.min(24,Math.max(settings.hours,(observationT-Math.min(...times))/3600000));saveSettings();}const parsed=data.result.map(row=>{try{return core.parse(row,'historical-backtrack',Date.now());}catch(_){return null;}}),valid=parsed.filter(Boolean),beforeSize=model.events.size,seen=new Map();let duplicates=0,conflicts=0;for(const e of valid){const prior=seen.get(e.guid)||model.events.get(e.guid);if(prior){if(prior.identity!==e.identity||prior.raw&&e.raw&&core.stable(prior.raw)!==core.stable(e.raw))conflicts++;else duplicates++;}if(!prior)seen.set(e.guid,e);}handle({result:data.result},{epoch:dataGeneration,scope,source:'historical-backtrack'});return {added:model.events.size-beforeSize,duplicates,unparsed:parsed.length-valid.length+conflicts};},archive:archivePage,
+    save:progress=>{try{localStorage.setItem(BACKTRACK_KEY,JSON.stringify({generation:dataGeneration,persistentRecords:settings.persist,...progress}));}catch(e){backtrackSaveError='進度保存失敗 / progress save failed: '+e.message;}},change:backtrackChanged});
+    try{const saved=JSON.parse(localStorage.getItem(BACKTRACK_KEY)||'null');if(saved?.generation===dataGeneration&&saved.session?.right&&saved.session?.lower===saved.session.right-86400000){if(!saved.persistentRecords&&saved.session){saved.session={...saved.session,cursor:null,earliest:null,pages:0,returned:0,added:0,duplicates:0,unparsed:0,seenCursors:[],elapsedMs:0};}backtrack.restore(saved);if(saved.session)messages.historyRestored=()=>t('history_reload_restored');}}catch(e){backtrackSaveError='進度無法恢復 / restore failed: '+e.message;}
+    api.backtrack={state:()=>backtrack.snapshot(),configure:()=>{prepareBacktrack();return backtrack.snapshot();},start:()=>startMapBacktrack(backtrack.snapshot().automatic),step:()=>startMapBacktrack(false),pause:()=>backtrack.pause(),automatic:on=>{backtrack.setAutomatic(on);},clearCursor:()=>backtrack.clear(),rawPages:()=>backtrack.rawPages(),exportRaw:exportBacktrack};
   }
+  let historySession=null,backtrackLease=null,capture=null,historyFreezeRight=null;
+  const HISTORY_PAUSE_KEY=KEY+'-history-pause';
+  function mapRecordInterval(area=false){const b=acquisitionTarget().bounds,rows=[...model.events.values()].filter(e=>e.time<=observationT&&e.time>=observationT-Math.min(24,settings.hours)*3600000&&(!area||e.portals.some(p=>p.position&&p.position[0]*1e6>=b.minLatE6&&p.position[0]*1e6<=b.maxLatE6&&p.position[1]*1e6>=b.minLngE6&&p.position[1]*1e6<=b.maxLngE6)));return {earliest:rows.length?rows.reduce((n,e)=>Math.min(n,e.time),Infinity):null,latest:rows.length?rows.reduce((n,e)=>Math.max(n,e.time),-Infinity):null,count:rows.length};}
+  function renderMapIntervals(){const interval=mapRecordInterval(),value=t('map_interval')+' '+(interval.count?clockText.absolute(interval.earliest)+' ~ '+clockText.absolute(interval.latest):t('map_interval_empty'));for(const n of document.querySelectorAll('[data-map-interval]')){if(n.textContent!==value)n.textContent=value;n.dataset.earliest=interval.earliest??'';n.dataset.latest=interval.latest??'';}for(const n of document.querySelectorAll('[data-history-pause]'))n.textContent=historySession?.snapshot().active?t('history_live_paused'):(messages.historyRestored||'');}
+  function intervalNode(){const n=el('p',undefined,'ptcg-map-interval');n.dataset.mapInterval='1';return n;}
+  function initHistorySession(){if(historySession)return;historySession=createTrackerHistorySession({live:()=>acquisition.snapshot().enabled,setLive:on=>acquisition.enable(on),observation:()=>({live:liveObservation,T:observationT}),freeze:()=>{const latest=historyFreezeRight??mapRecordInterval(true).latest;liveObservation=false;observationT=latest??observationT;observationRevision++;syncObservationInputs();requestRender(true);},restore:(prior,on)=>{historyFreezeRight=null;liveObservation=on&&prior.live;observationT=liveObservation?Date.now():(prior.live?observationT:prior.T);observationRevision++;syncObservationInputs();requestRender(true);},save:s=>{if(s)localStorage.setItem(HISTORY_PAUSE_KEY,JSON.stringify(s));else localStorage.removeItem(HISTORY_PAUSE_KEY);},recovered:()=>{messages.historyRestored=()=>t('history_reload_restored');},change:()=>renderMapIntervals()});try{historySession.recover(JSON.parse(localStorage.getItem(HISTORY_PAUSE_KEY)||'null'));}catch(_){localStorage.removeItem(HISTORY_PAUSE_KEY);}api.mapTimeInterval=()=>({...mapRecordInterval(),cutoff:observationT,lower:observationT-settings.hours*3600000,hours:settings.hours,pause:historySession.snapshot()});}
+  function backtrackChanged(state){if(!state.active&&backtrackLease!==null){const lease=backtrackLease;backtrackLease=null;historySession.release(lease);}updateBacktrackUI();renderMapIntervals();}
+  function prepareBacktrack(){if(capture?.snapshot().running)capture.cancel('task-switch');cancelHistoryAction();acquisition.cancelHistory();const current=acquisitionTarget(),prior=backtrack.snapshot();const compatible=JSON.stringify(current.bounds)===JSON.stringify(prior.bounds)&&prior.lower===prior.right-86400000&&prior.right<=observationT&&prior.right>=observationT-86400000;if(!compatible){const interval=mapRecordInterval(true),right=interval.latest??observationT,T=interval.earliest??right;backtrack.configure(T,current.bounds,{right,lower:right-86400000});}historyFreezeRight=backtrack.snapshot().right;return true;}
+  function startMapBacktrack(automatic){prepareBacktrack();backtrack.setAutomatic(automatic);if(backtrackLease===null)backtrackLease=historySession.acquire();backtrack.start();}
+  function buildBacktrack(w){w.body.append(intervalNode(),el('small',t('map_history_help')));const actions=el('div',undefined,'ptcg-actions'),step=button(t('backtrack_one_page'),()=>startMapBacktrack(false)),start=button(t('backtrack_start_auto'),()=>startMapBacktrack(true)),stop=button(t('backtrack_stop'),()=>backtrack.pause());step.dataset.backtrackStep='1';start.dataset.backtrackStart='1';stop.dataset.backtrackStop='1';actions.append(step,start,stop);w.body.append(actions);const pause=el('small');pause.dataset.historyPause='1';w.body.append(pause);for(const key of ['status','progress','times','scope','counts','warning']){const n=el(key==='warning'?'small':'p');n.dataset['backtrack'+key[0].toUpperCase()+key.slice(1)]='1';w.body.append(n);}const details=el('details'),raw=el('pre');raw.dataset.backtrackDiagnostics='1';details.append(el('summary',t('backtrack_diagnostics')),button(t('backtrack_download_raw'),downloadBacktrack),raw);w.body.append(details);updateBacktrackUI();renderMapIntervals();}
+  function initCapture(){if(capture)return;capture=createTrackerCapture({version:VERSION,source:location.origin+location.pathname,generation:()=>dataGeneration,send:(...a)=>coordinator.submit(...a),change:updateCaptureUI});api.capture={start:options=>{messages.captureError='';if(backtrack?.snapshot().active)backtrack.pause('backtrack_reason_task');acquisition.cancelHistory();return capture.start({...options,bounds:options.bounds||acquisitionTarget().bounds});},cancel:()=>capture.cancel(),state:()=>capture.snapshot(),bundle:()=>capture.bundle()};}
+  function buildCapture(w){const now=Date.now(),fields={};w.body.append(el('p',t('capture_scope_help')));for(const [key,value,label]of [['start',now-3600000,'capture_start'],['end',now,'capture_end']]){const n=el('input'),wrap=el('label',t(label),'ptcg-field');n.type='datetime-local';n.step='.001';n.value=clockText.absolute(value).replaceAll('/','-').replace(' ','T');n.dataset.captureTime=key;wrap.append(n);fields[key]=n;w.body.append(wrap);}for(const [key,value,min,max]of [['delayMs',1200,800,3600000],['maxPagesPerTab',100,1,500]]){const n=el('input'),wrap=el('label',t(key==='delayMs'?'capture_delay':'capture_limit'),'ptcg-field');n.type='number';n.value=value;n.min=min;n.max=max;n.dataset.captureOption=key;fields[key]=n;wrap.append(n);w.body.append(wrap);}const start=button(t('capture_start_button'),()=>{api.capture.start({startMs:Date.parse(fields.start.value),endMs:Date.parse(fields.end.value),delayMs:Number(fields.delayMs.value),maxPagesPerTab:Number(fields.maxPagesPerTab.value)}).catch(e=>{messages.captureError=()=>t('capture_invalid');updateCaptureUI();});}),cancel=button(t('capture_cancel'),()=>capture.cancel()),download=button(t('capture_download'),()=>{const bundle=capture.bundle();if(!bundle)return;const url=URL.createObjectURL(new Blob([JSON.stringify(bundle,null,2)],{type:'application/json'})),a=el('a');a.href=url;a.download='comm_capture_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json';a.click();const timer=setTimeout(()=>URL.revokeObjectURL(url),60000);cleanup.push(()=>{clearTimeout(timer);URL.revokeObjectURL(url);});});start.dataset.captureStart='1';cancel.dataset.captureCancel='1';download.dataset.captureDownload='1';const status=el('p',undefined,'ptcg-capture-status');status.dataset.captureStatus='1';w.body.append(start,cancel,download,status,el('small',t('capture_provenance')));updateCaptureUI();}
+  function updateCaptureUI(){if(!wm||!capture)return;const s=capture.snapshot(),range=s.range,w=wm.get('acquisition');if(!w)return;const start=w.body.querySelector('[data-capture-start]'),cancel=w.body.querySelector('[data-capture-cancel]'),download=w.body.querySelector('[data-capture-download]'),status=w.body.querySelector('[data-capture-status]');if(start)start.disabled=s.running;if(cancel)cancel.disabled=!s.running;if(download)download.disabled=s.running||!s.range;for(const n of w.body.querySelectorAll('[data-capture-time],[data-capture-option]'))n.disabled=s.running;if(status)status.textContent=t('capture_state_'+s.state)+' · '+t('capture_pages',{n:s.pages})+(s.reason?' · '+t('capture_reason_'+s.reason):'')+(s.summary?' · RAW '+s.summary.rawRecords+' · '+t('capture_duplicates',{n:s.summary.duplicateInRangeOccurrences}):'')+(range?' · '+clockText.absolute(range.startMs)+' ~ '+clockText.absolute(range.endMs):'')+(messages.captureError?' · '+messages.captureError:'');}
+  function updateBacktrackUI(){if(!backtrack||!wm)return;const w=wm.get('backtrack');if(!w)return;const s=backtrack.snapshot(),shared=coordinator?.snapshot(),text=(key,value)=>{const n=w.body.querySelector('[data-backtrack-'+key+']');if(n&&n.textContent!==value)n.textContent=value;},seconds=Math.floor((s.elapsedMs||0)/1000),elapsed=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0'),reason=String(s.reason||''),reasonText=reason.startsWith('backtrack_reason_')?t(reason.split(' HTTP ')[0])+(reason.includes(' HTTP ')?' HTTP '+reason.split(' HTTP ')[1]:''):t('backtrack_reason_failed');
+    const retry=shared?.nextAttempt&&shared.nextAttempt>Date.now()?' · '+t('backtrack_retry',{n:Math.ceil((shared.nextAttempt-Date.now())/1000)}):'';text('status',t('backtrack_state_'+(s.state||'off'))+' · '+t('backtrack_automatic')+' '+(s.automatic?'ON':'OFF')+' · '+reasonText+retry);text('progress',t('backtrack_progress',{pages:s.pages||0,returned:s.returned||0,added:s.added||0,duplicates:s.duplicates||0,unparsed:s.unparsed||0}));text('times',t('history_elapsed',{elapsed})+' · '+t('map_24h_limit'));renderMapIntervals();text('scope',t('backtrack_scope'));text('counts',t('backtrack_counts',{memory:model.events.size,saved:persisted.size,visible:visibleHistoryCount()}));text('warning',backtrackSaveError+' '+t(settings.persist?'backtrack_persistent':'backtrack_not_persistent')+' '+t('backtrack_view_retention',{hours:settings.hours,days:settings.retentionDays}));text('diagnostics',JSON.stringify({session:s.id,bounds:s.bounds,cursor:s.cursor,sharedWait:shared?.reason},null,2));const auto=w.body.querySelector('[data-backtrack-automatic]');if(auto)auto.checked=s.automatic;const input=w.body.querySelector('[data-backtrack-time]');if(s.T&&input&&!input._dirty&&document.activeElement!==input)input.value=clockText.absolute(s.T).replaceAll('/','-').replace(' ','T');
+  }
+
+  const primaryIds=['dashboard','acquisition','map-display','data','settings'];
+  const legacyPanels={auto:['acquisition','live'],backtrack:['acquisition','history'],storage:['data','storage'],export:['data','export'],about:['settings','about']};
+  const primaryTitles=()=>({dashboard:t('nav_overview'),acquisition:t('nav_acquisition'),'map-display':t('nav_map'),data:t('nav_data'),settings:t('nav_settings')});
+  function primaryNavigation(w){w.node.dataset.primaryEntry=w.id;w.tab.dataset.primaryEntry=w.id;w.tabItem.classList.add('ptcg-primary-tab');if(w.id!=='dashboard')return;const menu=el('details');menu.dataset.primaryNavigation='1';menu.append(el('summary',t('nav_open_page')));const nav=el('div',undefined,'ptcg-actions');for(const id of primaryIds){const b=button(primaryTitles()[id],()=>openPanel(id));b.dataset.primaryEntry=id;nav.append(b);}menu.append(nav);w.body.append(menu);}
+
+  function secondaryPages(w,definitions,defaultPage){const nav=el('nav',undefined,'ptcg-actions');nav.dataset.secondaryNavigation='1';w.pages=new Map();w.body.append(nav);for(const [id,title,build]of definitions){const node=el('section');node.dataset.controlPage=id;w.pages.set(id,node);const b=button(title,()=>showControlPage(w,id));b.dataset.controlPageButton=id;nav.append(b);w.body.append(node);build({...w,body:node});}showControlPage(w,w.subpage||defaultPage,false);}
+  function showControlPage(w,id,persist=true){if(!w.pages?.has(id))id=w.pages?.keys().next().value;w.subpage=id;for(const [key,n]of w.pages||[])n.hidden=key!==id;for(const b of w.body.querySelectorAll('[data-control-page-button]'))b.setAttribute('aria-pressed',String(b.dataset.controlPageButton===id));if(persist)wm.save();updateBacktrackUI();renderAuto();updateCaptureUI();renderMapIntervals();updateStorageSummary();updateExportPreview();}
+  function buildAcquisition(w){primaryNavigation(w);secondaryPages(w,[['live',t('nav_live'),buildLivePage],['history',t('nav_history'),buildBacktrack],['download',t('nav_download'),buildCapture]],'live');}
+  function buildLivePage(w){w.body.append(intervalNode());const pause=el('small');pause.dataset.historyPause='1';w.body.append(pause);if(settings.mapHoursClamped)w.body.append(el('p',t('map_hours_migrated'),'ptcg-warning'));const actions=el('div',undefined,'ptcg-actions'),refresh=button(t('refresh'),refreshPublic);refresh.dataset.refresh='1';actions.append(refresh,button(t('fetch_range_again'),()=>fetchHistory(true)));w.body.append(actions,el('small',t('global_time_scope')),field(t('lookback'),'hours',hourOptions));buildObservationControls(w);buildAuto(w);const liveStatus=el('p');liveStatus.dataset.livePrimary='1';w.body.prepend(liveStatus);const diagnostic=el('details');diagnostic.dataset.liveDiagnostics='1';diagnostic.append(el('summary',t('live_diagnostics')),w.body.querySelector('[data-acquisition-summary]'));w.body.append(diagnostic);const advanced=el('details'),summary=el('summary',t('advanced_requests')),controls=[...w.body.children].filter(n=>n.querySelector?.('[data-setting=budgetEnabled], [data-setting=burstMs], [data-setting=burstPages], [data-setting=budgetWindowMs], [data-setting=budgetRequests], [data-setting=budgetCooldownMs]'));advanced.append(summary,...controls,el('small',t('budget_defaults_off_enabling_it_delays_catch_up_and_retains_curso')));w.body.append(advanced,createHistoryStatus());}
+  function buildObservationControls(w){const mode=el('label',undefined,'ptcg-check'),live=el('input'),at=el('input');live.type='checkbox';live.checked=liveObservation;live.dataset.liveObservation='1';at.type='datetime-local';at.step='.001';at.dataset.observationTime='1';at.value=clockText.absolute(observationT).replaceAll('/','-').replace(' ','T');live.addEventListener('change',()=>{api.setObservationTime(live.checked?null:Date.now());});at.addEventListener('change',()=>{const n=Date.parse(at.value);if(Number.isSafeInteger(n))api.setObservationTime(n);});mode.append(live,document.createTextNode(t('live_observation')));w.body.append(mode,at,el('small',clockText.zone+' · '+t('live_fixed_hint')));}
+  function buildData(w){primaryNavigation(w);secondaryPages(w,[['storage',t('nav_storage'),buildStorage],['export',t('nav_export'),buildExport]],'storage');w.body.append(button(t('backtrack_download_raw'),downloadBacktrack));}
+  function buildMapDisplay(w){primaryNavigation(w);const roles=el('fieldset');roles.append(el('legend',t('visible_factions_accounts')));for(const role of ['RES','ENL','MACHINA','NIA','OTHER']){const label=el('label',undefined,'ptcg-check'),input=el('input');input.type='checkbox';input.dataset.roleVisibility=role;input.checked=!!settings.roleVisibility[role];input.addEventListener('change',()=>{settings.roleVisibility[role]=input.checked;saveSettings();if(input.checked)layers[role].addTo(window.map);else window.map.removeLayer(layers[role]);requestRender(true);});label.append(input,factionBadge(role),document.createTextNode(roleLabels[role]));roles.append(label);}w.body.append(roles);const grid=el('div',undefined,'ptcg-grid');for(const [label,key]of [['player_names','names'],['faction_markers','markers'],['activity_times','labelTime'],['activity_events','events'],['destroyed_links','destroyedLinks'],['interaction_connections','paths'],['fade_older_activity','fade']])grid.append(checkbox(t(label),key));const experiment=el('fieldset');experiment.dataset.historicalInferenceGroup='1';experiment.append(el('legend',t('historical_inference_group')));for(const [label,key]of [['historical_positions','historicalPositions'],['historical_regions','historicalRegions'],['inferred_connections','historicalPaths']])experiment.append(checkbox(t(label),key));w.body.append(grid,experiment);buildFactionControls(w);}
+  function buildSharedSettings(w){primaryNavigation(w);secondaryPages(w,[['preferences',t('nav_preferences'),buildPreferences],['inference',t('nav_shared_inference'),buildSharedInference],['about',t('about'),buildAbout]],'preferences');}
+  function buildPreferences(w){w.body.append(field(t('language'),'language',[['auto','Auto'],['en','English'],['zh-TW','繁體中文'],['zh-CN','简体中文'],['ja','日本語']],refreshLocale),field(t('time_format'),'timeMode',[['relative',t('relative_time')],['absolute',t('absolute_time')]]),field(t('activity_rows'),'summaryRows',[[3,'3'],[5,'5'],[10,'10']]),field(t('detail_rows'),'pageSize',[[10,t('10_records')],[20,t('20_records')],[40,t('40_records')]]),checkbox(t('speed_estimates'),'speed'));}
+  function buildSharedInference(w){w.body.append(el('p',t('shared_inference_scope')),field(t('inference_reference'),'inferenceReference',[['local-average',t('local_average_choice')],['minimum-movement',t('minimum_movement_choice')],['both',t('both_references')]]),field(t('primary_map_result'),'historicalPrimary',[['minimum-movement',t('minimum_movement_choice')],['local-average',t('local_average_choice')]]),field(t('attack_assumption'),'historicalScenario',[['interaction',t('interaction_baseline')],['XMP',t('xmp_assumption')]]));buildXMP(w);const quick=button(t('apply_shared_xmp'),()=>{settings.inferenceReference='minimum-movement';settings.historicalScenario='XMP';saveSettings();requestRender(true);});quick.dataset.attackSimulation='1';w.body.append(quick,el('small',t('historical_inspection_help')));}
+  function openSharedInference(){const w=openPanel('settings');showControlPage(w,'inference');}
+  function migrateNavigation(saved){if(saved.navSchema===3)return;const original=JSON.parse(JSON.stringify(saved));saved.legacyNavigationLayouts=original;const map=id=>id==='settings'?'map-display':legacyPanels[id]?.[0]||id,owners=new Map();
+    for(const row of saved.tabs||[]){const id=map(row.id),existing=owners.get(id),active=(saved.containers||[]).some(c=>c.active===row.id);if(!existing||active&&(!existing.active||row.owner?.startsWith('detached:')))owners.set(id,{row,active});}
+    saved.tabs=[...owners].map(([id,{row}])=>{const old=row.id,copy={...row,id};if(legacyPanels[old])copy.subpage=legacyPanels[old][1];if(copy.player){copy.kind='reader';copy.expanded=row.expanded||[];copy.limit=row.limit||Math.max(row.summaryRows||settings.summaryRows,((row.page||0)+1)*(row.summaryRows||settings.summaryRows));copy.scroll={...row.scroll,reader:row.scroll?.[row.kind]??row.scroll?.reader??0};}if(copy.owner?.startsWith('detached:'))copy.owner='detached:'+id;return copy;});
+    for(const c of saved.containers||[]){if(c.id.startsWith('detached:'))c.id='detached:'+map(c.id.slice(9));c.active=map(c.active);c.order=[...new Set((c.order||[]).map(map))].filter(id=>saved.tabs.find(t=>t.id===id)?.owner===c.id);if(!c.order.includes(c.active))c.active=c.order[0]||null;}saved.containers=[...new Map((saved.containers||[]).map(c=>[c.id,c])).values()];saved.navSchema=3;
+  }
+
+  function openPanel(id='dashboard'){
+    if(id==='players')id='dashboard';const alias=legacyPanels[id];if(alias)id=alias[0];const titles=primaryTitles(),builders={dashboard:buildDashboard,acquisition:buildAcquisition,'map-display':buildMapDisplay,data:buildData,settings:buildSharedSettings};if(!builders[id])return null;
+    const panel=wm.open(id,titles[id],builders[id],id==='dashboard'?490:460,590);if(alias)showControlPage(panel,alias[1]);render();return panel;
+  }
+
   api.open=openPanel;api.windows=()=>wm.windows;api.workspaces=()=>wm;
-  function playerWindow(name,kind,preserveFollow=false,forceFollow=false){
+  function playerWindow(name,kind,preserveFollow=false,forceFollow=false){kind='reader';
     name=canonical(name);const id='player:'+name.toLowerCase(),existing=wm.get(id);
-    const w=wm.open(id,name,w=>{w.kind=kind;w.player=name;w.limit=settings.pageSize;w.summaryRows=settings.summaryRows;},470,550);
+    const w=wm.open(id,name,w=>{w.kind=kind;w.player=name;w.limit=settings.summaryRows;w.summaryRows=settings.summaryRows;},470,550);
     if(!existing)w.kind=kind;w.node.dataset.playerWindow=name;w.node.dataset.kind=w.kind;
     w.onActivate=()=>{if(w.kind==='detail')renderDetail(w);else renderReader(w);};
     if(!preserveFollow)selection(name);render();wm.save();return w;
   }
   function openReader(name){const prior=wm.get('player:'+canonical(name).toLowerCase());if(prior)prior.viewSection='activity';return playerWindow(name,'reader');}
-  function openDetail(name){const prior=wm.get('player:'+canonical(name).toLowerCase());if(prior)prior.viewSection='activity';const w=playerWindow(name,'detail');if(w.kind!=='detail')return switchWindow(w.player,'detail');return w;}
+  function openDetail(name){return openReader(name);}
+
   api.openPlayer=openReader;api.openDetail=openDetail;
   function selection(name){settings.selected=name;saveSettings();}
   function field(title,key,values,change){const label=el('label',title,'ptcg-field'),input=el('select');input.dataset.setting=key;for(const[value,text]of values){const o=el('option',text);o.value=value;input.append(o);}input.value=settings[key];input.addEventListener('change',()=>{if(localizing)return;const previous=settings[key];settings[key]=typeof defaults[key]==='number'?Number(input.value):input.value;saveSettings();change?.();if(key==='hours')lookbackChanged(previous);requestRender(true);});label.append(input);return label;}
   function checkbox(title,key){const label=el('label',undefined,'ptcg-check'),input=el('input');input.type='checkbox';input.checked=settings[key];input.dataset.setting=key;input.addEventListener('change',()=>{if(localizing)return;settings[key]=input.checked;saveSettings();if(key==='persist')persistenceChanged();requestRender(true);});label.append(input,document.createTextNode(title));return label;}
   function buildDashboard(w){
-    const actions=el('div',undefined,'ptcg-actions'),refresh=button(t("refresh"),refreshPublic);refresh.dataset.refresh='1';actions.append(refresh,button(t("fetch_range_again"),()=>fetchHistory(true)));for(const[id,title]of[['settings',t("display_settings")],['storage',t("storage")],['export',t("csv_export")],['about',t("about")],['auto',t("auto_refresh")]])actions.append(button(title,()=>openPanel(id)));
+    primaryNavigation(w);
     const stats=el('div');stats.dataset.dashboardStats='1';const ghosts=el('div');ghosts.dataset.ghosts='1';const charts=el('div',undefined,'ptcg-charts');charts.dataset.charts='1';
     const input=el('input');input.type='search';input.placeholder=t("search_players");input.value=searchTerm;input.setAttribute('aria-label',t("search_players"));input.addEventListener('input',()=>{searchTerm=input.value;playerLimit=40;renderDashboard();});
     const picks=el('div',undefined,'ptcg-actions');picks.append(button(t("select_all"),()=>{manualSelection([...model.players.keys()]);}),button(t("clear_selection"),()=>{manualSelection([]);}));const label=el('small');label.dataset.selectionSummary='1';const list=el('div');list.dataset.players='1';
-    w.body.append(actions,el('small',t("time_zone")+clockText.zone),stats,charts,ghosts,field(t("lookback"),'hours',hourOptions),input,picks,label,field(t("account_category"),'listCategory',categories),field(t("source_faction"),'faction',[['all',t("all")],...Object.entries(core.teams).map(([key,value])=>[key,i18n.status(value)])]),list);
+    const detail=el('details');detail.dataset.overviewDetails='1';detail.append(el('summary',t('overview_details')),charts);w.body.append(stats,ghosts,detail,input,picks,label,field(t("account_category"),'listCategory',categories),field(t("source_faction"),'faction',[['all',t("all")],...Object.entries(core.teams).map(([key,value])=>[key,i18n.status(value)])]),list);
   }
   function renderDashboard(){
     const w=wm.get('dashboard');if(!w)return;
     const views=[...model.players.keys()].map(n=>sharedView(n,settings.hours)).filter(v=>v.last),available=views.filter(v=>(settings.faction==='all'||v.team===settings.faction)&&categoryMatches(v.role,settings.listCategory)),found=available.filter(v=>v.name.toLowerCase().includes(searchTerm.toLowerCase())).sort((a,b)=>b.last.time-a.last.time||a.name.localeCompare(b.name));
     const filtered=found.filter(v=>scopeIncludes(v.name,{kind:'overview'})),c={RES:0,ENL:0,MACHINA:0,NIA:0,OTHER:0};for(const v of filtered)c[v.role]++;renderCharts(w.body.querySelector('[data-charts]'),filtered);
     const latest=filtered.reduce((t,v)=>Math.max(t,v.last.time),-Infinity),count=filtered.reduce((n,v)=>n+v.events.length,0);
-    w.body.querySelector('[data-dashboard-stats]').replaceChildren(el('p',t("players_93")+(c.RES+c.ENL)+' · RES '+c.RES+' · ENL '+c.ENL),el('small','Machina '+c.MACHINA+' · NIA '+c.NIA+t("other_94")+c.OTHER),el('p',count+t("events_latest")+time(latest)),el('p',briefStatus()),el('p',messages.refreshText),el('p',messages.historyText));w.body.querySelector('[data-refresh]').disabled=refreshBusy;
+    w.body.querySelector('[data-dashboard-stats]').replaceChildren(el('p',t("players_93")+(c.RES+c.ENL)+' · RES '+c.RES+' · ENL '+c.ENL),el('small','Machina '+c.MACHINA+' · NIA '+c.NIA+t("other_94")+c.OTHER),el('p',count+t("events_latest")+time(latest)),el('p',briefStatus()),el('p',messages.refreshText),el('p',messages.historyText));const refresh=w.body.querySelector('[data-refresh]');if(refresh)refresh.disabled=refreshBusy;
     w.body.querySelector('[data-selection-summary]').textContent=settings.overviewSelection.length?t("selected")+settings.overviewSelection.length+t("players_97"):t("showing_all_players");const alert=w.body.querySelector('[data-ghosts]');alert.replaceChildren();
     if(settings.speed)for(const v of filtered){const sp=speeds(v);if(sp?.ghost||sp?.ghostCandidate)alert.append(roleStyle(button(t("unusual_speed_candidate")+v.name,()=>openReader(v.name),'ptcg-ghost'),v));}
     const list=w.body.querySelector('[data-players]');updatePlayerRows(w,list,found.slice(0,playerLimit));
@@ -4511,47 +5457,40 @@ function createTrackerCore() {
     w.playerRows ||=new Map();const keep=new Set(views.map(v=>v.name.toLowerCase()));for(const [id,row]of w.playerRows)if(!keep.has(id)){row.remove();w.playerRows.delete(id);}
     let cursor=list.firstChild;for(const v of views){const key=v.name.toLowerCase();let row=w.playerRows.get(key);if(!row||row.parentElement!==list){row=el('div',undefined,'ptcg-player-row');row._pick=button('',()=>toggleOverview(row._view.name),'ptcg-player-pick');row._name=button('',()=>openReader(row._view.name),'ptcg-player-name');row._name.dataset.openPlayer=v.name;row._activity=button('',()=>openReader(row._view.name),'ptcg-player-activity');row._activity.dataset.playerActivity=v.name;row._meta=el('span');row._counts=el('small',undefined,'ptcg-player-counts');row._state=el('small',undefined,'ptcg-player-state');row._ghost=el('strong',undefined,'ptcg-ghost-tag');row.append(row._pick,row._name,row._activity,row._meta,row._counts,row._state,row._ghost);w.playerRows.set(key,row);}presentPlayerRow(row,v);if(row!==cursor)list.insertBefore(row,cursor);cursor=row.nextSibling;}
   }
-  function compactEvent(e,s){const row=el('div',undefined,'ptcg-compact-event');row.dataset.event=e.guid;const stamp=el('span',time(e.time));stamp.prepend(eventSymbol(e));stamp.addEventListener('click',()=>focusEvent(e));stamp.title=time(e.time,true)+' · '+e.time;const portals=el('span',undefined,'ptcg-compact-portal');if(e.portals[0])portals.append(portalLink(e.portals[0]));else portals.textContent='—';row.append(stamp,el('span',shortActions[e.action]+((s?.ghost||s?.ghostCandidate)?t("unusual_speed_candidate_109"):'')),portals);if((s?.ghost||s?.ghostCandidate))row.classList.add('ptcg-ghost');return row;}
+  function eventControl(text,fn){const n=button(text,e=>{e.preventDefault();e.stopPropagation();fn();});n.className='ptcg-event-action';return n;}
+  function eventEndpoints(e,interactive=true){const n=el('span',undefined,'ptcg-compact-portal'),link=core.parseLink(e),portals=link?.endpoints||e.portals;
+    if(!portals.length)n.textContent='—';
+    for(const [i,p]of portals.entries()){if(i)n.append(document.createTextNode(link?(link.directed?' → ':' ↔ '):' · '));if(interactive){const node=portalLink(p);node.title=p.name||p.plain||t('unnamed_portal');n.append(node);}else n.append(document.createTextNode(p.name||p.plain||t('unnamed_portal')));}
+    if(link&&!link.directed)n.append(el('small',t(link.destroyed?'link_object_endpoints':'link_direction_unknown')));return n;
+  }
+  function compactEvent(e,s,context='player',passive=false){const row=el('div',undefined,'ptcg-compact-event');row.dataset.event=e.guid;const stamp=el('span',undefined,'ptcg-event-time'),age=el('span',time(e.time));age.dataset.eventTime=e.time;stamp.append(age);stamp.title=time(e.time,true)+' · '+e.time;
+    const action=el('span',undefined,'ptcg-event-kind'),label=actionText(e)+((s?.ghost||s?.ghostCandidate)?t('unusual_speed_candidate_109'):'');action.append(eventSymbol(e),passive?el('span',label):eventControl(label,()=>focusEvent(e)));
+    const contextual=el('span',undefined,'ptcg-event-context');if(context==='portal'){const actor=passive?el('strong',e.player):eventControl(e.player,()=>openReader(e.player));actor.style.color=roleColors[core.role(e)];contextual.append(actor);if(core.parseLink(e))contextual.append(eventEndpoints(e,!passive));}else contextual.append(eventEndpoints(e,!passive));row.append(stamp,action,contextual);if(s?.ghost||s?.ghostCandidate)row.classList.add('ptcg-ghost');return row;
+  }
   function playerHeading(w,v){w.heading.textContent=v.name+(w.kind==='detail'?t("details"):'');roleStyle(w.heading,v);w.node.classList.toggle('ptcg-ghost-window',!!(speeds(v)?.ghost||speeds(v)?.ghostCandidate));}
   function addPlayerSections(f,w){const nav=el('nav',undefined,'ptcg-player-sections');for(const [id,key]of [['activity','activity'],['inference','inference_tab']]){const b=button(t(key),()=>{w.viewSection=id;wm.save();requestRender(true);});b.dataset.playerSection=id;b.setAttribute('aria-pressed',String((w.viewSection||'activity')===id));nav.append(b);}f.prepend(nav);}
-  function renderHistoricalReader(w){const v=sharedView(w.player),base=inferenceFor(v),display=historicalModel.select(base?.historical,primaryModel(),settings.historicalScenario,w.historicalBranch??null),f=document.createDocumentFragment();playerHeading(w,v);const signature=JSON.stringify([i18n.locale(),v.events.map(e=>[e.guid,e.identity]),observationRevision,historicalTime(w.player),primaryModel(),settings.inferenceReference,settings.historicalScenario,w.historicalBranch,display.key,display.state,display.reason,inferencePending.has(v.name),follow.target,follow.paused,follow.manual]);const cutoffNode=w.body.querySelector('[data-historical-cutoff]');if(cutoffNode){const text=t('observation_cutoff')+' '+clockText.absolute(observationT);if(cutoffNode.textContent!==text)cutoffNode.textContent=text;}if(w.historicalRenderSignature===signature&&w.body.querySelector('[data-historical-time]'))return;w.historicalRenderSignature=signature;const actions=el('div',undefined,'ptcg-actions');followControl(actions,w.player);historyButton(actions,w);f.append(actions);addPlayerSections(f,w);
+  function renderHistoricalReader(w){const savedScroll=w.body.scrollTop;const v=sharedView(w.player),base=inferenceFor(v),display=historicalModel.select(base?.historical,primaryModel(),settings.historicalScenario,w.historicalBranch??null),f=document.createDocumentFragment();playerHeading(w,v);const signature=JSON.stringify([i18n.locale(),v.events.map(e=>[e.guid,e.identity]),observationRevision,historicalTime(w.player),primaryModel(),settings.inferenceReference,settings.historicalScenario,w.historicalBranch,display.key,display.state,display.reason,inferencePending.has(v.name),follow.target,follow.paused,follow.manual]);const cutoffNode=w.body.querySelector('[data-historical-cutoff]');if(cutoffNode){const text=t('observation_cutoff')+' '+clockText.absolute(observationT);if(cutoffNode.textContent!==text)cutoffNode.textContent=text;}if(w.historicalRenderSignature===signature&&w.body.querySelector('[data-historical-time]'))return;w.historicalRenderSignature=signature;const actions=el('div',undefined,'ptcg-actions');followControl(actions,w.player);historyButton(actions,w);f.append(actions);addPlayerSections(f,w);
     const label=el('label',t('historical_time'),'ptcg-field'),input=el('input');input.type='datetime-local';input.step='.001';input.dataset.historicalTime='1';input.value=clockText.absolute(historicalTime(w.player)).replaceAll('/','-').replace(' ','T');input.addEventListener('change',()=>{const at=Date.parse(input.value);if(Number.isSafeInteger(at))api.setHistoricalTime(w.player,at);});label.append(input);const cutoffLabel=el('small',t('observation_cutoff')+' '+clockText.absolute(observationT));cutoffLabel.dataset.historicalCutoff='1';f.append(label,cutoffLabel);
     const slider=el('input');slider.type='range';slider.step=1;slider.min=v.events[0]?.time??observationT;slider.max=v.events.at(-1)?.time??observationT;slider.value=historicalTime(w.player);slider.dataset.historicalSlider='1';slider.setAttribute('aria-label',t('historical_time'));slider.addEventListener('change',()=>api.setHistoricalTime(w.player,Number(slider.value)));f.append(slider);
-    f.append(field(t('inference_reference'),'inferenceReference',[['local-average',t('local_average_choice')],['minimum-movement',t('minimum_movement_choice')],['both',t('both_references')]]));if(settings.inferenceReference==='both')f.append(field(t('primary_map_result'),'historicalPrimary',[['minimum-movement',t('minimum_movement_choice')],['local-average',t('local_average_choice')]]));f.append(field(t('attack_assumption'),'historicalScenario',[['interaction',t('interaction_baseline')],['XMP',t('xmp_assumption')]]));
+    f.append(el('p',t('shared_inference_scope')),button(t('adjust_shared_inference'),openSharedInference));
     const variants=(base?.historical?.variants||[]).filter(r=>r.model===primaryModel()&&r.scenario===settings.historicalScenario),branches=[...new Set(variants.map(r=>r.branch))];if(branches.length>1){const label=el('label',t('selected_branch'),'ptcg-field'),select=el('select');select.dataset.historicalBranch='1';for(const id of branches){const o=el('option',t('branch_number',{n:id+1}));o.value=id;select.append(o);}select.value=display.branch??branches[0];select.addEventListener('change',()=>{w.historicalBranch=Number(select.value);wm.save();requestRender(true);});label.append(select);f.append(label,el('small',t('multiple_minimizers')));}
-    const status=el('p',display.state==='useful'?t('simulation_available'):inferencePending.has(v.name)?t('inferring_221'):/^worker-/.test(display.reason||'')?t('cannot_calculate_computation_unavailable'):t('insufficient_narrowing_evidence'),'ptcg-inference-primary');status.dataset.inferenceStatus='1';f.append(status);const availability=scenario=>historicalModel.select(base?.historical,primaryModel(),scenario,w.historicalBranch??null).state==='useful'?t('simulation_available'):t('insufficient_narrowing_evidence');f.append(el('small',t('scenario_availability',{base:availability('interaction'),xmp:availability('XMP')})));
-    const models=settings.inferenceReference==='both'?['minimum-movement','local-average']:[primaryModel()];for(const type of models){const result=historicalModel.select(base?.historical,type,settings.historicalScenario,w.historicalBranch??null),card=el('section',undefined,'ptcg-model-card');card.dataset.comparisonModel=type;card.append(el('strong',t(type==='minimum-movement'?'minimum_movement_choice':'local_average_choice')+' · '+clockText.absolute(historicalTime(v.name))));if(result.state==='useful'||result.state==='not-useful'){card.append(el('p',t('simulation_distance_average',{d:result.distanceM.toFixed(1),v:result.averageKmh===null?'—':result.averageKmh.toFixed(1)})),el('small',result.model==='minimum-movement'?t('simulation_bounds',{lo:result.wholeProof.lowerM.toFixed(1),hi:result.wholeProof.upperM.toFixed(1)}):t('reference_witness_help')),el('p',t('region_extent',{d:Math.ceil(result.diameterM),n:result.computedComponents?.length||0})));if(result.reference?.state==='valid')card.append(el('p',t('weighted_reference',{v:result.reference.kmh.toFixed(1)})));}const details=el('details'),summary=el('summary',t('assumptions_details'));details.append(summary,el('p',t('historical_reason_'+(result.reason||'useful'))),el('p',t('terrain_unknown')),el('p',t('uniform_interpolation_help')));if(result.rawIds)details.append(el('small',t('source_records',{n:result.rawIds.length})));if(result.branch!==undefined)details.append(el('p',t('branch_number',{n:result.branch+1})+' · '+t('multiple_minimizers')));if(result.wholeProof&&result.model==='minimum-movement')details.append(el('p',t('whole_simulation',{d:result.wholeProof.upperM.toFixed(1),v:result.wholeProof.wholeAverageKmh===null?'—':result.wholeProof.wholeAverageKmh.toFixed(1)})));card.append(details);f.append(card);}
-    f.append(el('small',t('comparison_not_accuracy')));const scroll=w.body.scrollTop,active=document.activeElement,key=active?.dataset?.historicalTime?'historicalTime':active?.dataset?.historicalSlider?'historicalSlider':null;w.body.replaceChildren(f);w.body.scrollTop=scroll;if(key)w.body.querySelector('[data-'+key.replace(/[A-Z]/g,x=>'-'+x.toLowerCase())+']')?.focus({preventScroll:true});
+    const status=el('p',['useful','coarse'].includes(display.state)?t('simulation_available'):inferencePending.has(v.name)?t('inferring_221'):/^worker-/.test(display.reason||'')?t('cannot_calculate_computation_unavailable'):t('insufficient_narrowing_evidence'),'ptcg-inference-primary');status.dataset.inferenceStatus='1';f.append(status);const availability=scenario=>historicalModel.select(base?.historical,primaryModel(),scenario,w.historicalBranch??null).state==='useful'?t('simulation_available'):t('insufficient_narrowing_evidence');f.append(el('small',t('scenario_availability',{base:availability('interaction'),xmp:availability('XMP')})));
+    const models=settings.inferenceReference==='both'?['minimum-movement','local-average']:[primaryModel()];for(const type of models){const result=historicalModel.select(base?.historical,type,settings.historicalScenario,w.historicalBranch??null),card=el('section',undefined,'ptcg-model-card');card.dataset.comparisonModel=type;card.append(el('strong',t(type==='minimum-movement'?'minimum_movement_choice':'local_average_choice')+' · '+clockText.absolute(historicalTime(v.name))));if(['useful','coarse','not-useful'].includes(result.state)){card.append(el('p',t('simulation_distance_average',{d:result.distanceM.toFixed(1),v:result.averageKmh===null?'—':result.averageKmh.toFixed(1)})),el('small',result.model==='minimum-movement'?t('simulation_bounds',{lo:result.wholeProof.lowerM.toFixed(1),hi:result.wholeProof.upperM.toFixed(1)}):t('reference_witness_help')),el('p',t('region_extent',{d:Math.ceil(result.diameterM),n:result.computedComponents?.length||0})));if(result.reference?.state==='valid')card.append(el('p',t('weighted_reference',{v:result.reference.kmh.toFixed(1)})));}const details=el('details'),summary=el('summary',t('assumptions_details'));details.append(summary,el('p',t('historical_reason_'+(result.reason||'useful'))),el('p',t('terrain_unknown')),el('p',t('uniform_interpolation_help')));if(result.wholeProof?.approximation)details.append(el('p',t('backtrack_approximation')));if(result.rawIds)details.append(el('small',t('source_records',{n:result.rawIds.length})));if(result.branch!==undefined)details.append(el('p',t('branch_number',{n:result.branch+1})+' · '+t('multiple_minimizers')));if(result.wholeProof&&result.model==='minimum-movement')details.append(el('p',t('whole_simulation',{d:result.wholeProof.upperM.toFixed(1),v:result.wholeProof.wholeAverageKmh===null?'—':result.wholeProof.wholeAverageKmh.toFixed(1)})));card.append(details);f.append(card);}
+    f.append(el('small',t('comparison_not_accuracy')));const scroll=savedScroll,active=document.activeElement,key=active?.dataset?.historicalTime?'historicalTime':active?.dataset?.historicalSlider?'historicalSlider':null;w.body.replaceChildren(f);w.body.scrollTop=scroll;if(key)w.body.querySelector('[data-'+key.replace(/[A-Z]/g,x=>'-'+x.toLowerCase())+']')?.focus({preventScroll:true});
   }
-  function renderReader(w){
-    if(w.viewSection==='inference'){renderHistoricalReader(w);return;}
-    const v=sharedView(w.player,settings.hours),s=speeds(v),f=document.createDocumentFragment();playerHeading(w,v);f.append(roleStyle(el('small',roleLabels[v.role]+' · '+clockText.zone),v));
-    if(messages.refreshText)f.append(el('small',messages.refreshText,'ptcg-refresh-status'));if(v.uncertainLatest||v.ambiguous)f.append(el('p',v.ambiguous?t("multiple_simultaneous_positions"):t("position_unknown"),'ptcg-warning'));
-    
-    if(settings.speed)f.append(el('p',s?.latest?speedLabel(s.latest):t("cannot_calculate")+(i18n.status(s?.status)||t("insufficient_data"))));
-    rowControl(f,w);for(const e of [...v.events].reverse().slice((w.page||0)*w.summaryRows,((w.page||0)+1)*w.summaryRows))f.append(compactEvent(e,s?.byGuid.get(e.guid)));if(!v.last)f.append(el('p',t("no_data_yet")));
-    const actions=el('div',undefined,'ptcg-actions ptcg-view-actions');actions.append(button(t("details_113"),()=>switchWindow(w.player,'detail')));followControl(actions,w.player);historyButton(actions,w);f.prepend(actions);addPlayerSections(f,w);const scroll=w.body.scrollTop;w.body.replaceChildren(f);w.body.scrollTop=scroll;
-  }
-  function renderDetail(w){
-    if(w.viewSection==='inference'){renderHistoricalReader(w);return;}
-    const v=sharedView(w.player,settings.hours),s=speeds(v),f=document.createDocumentFragment();playerHeading(w,v);const expanded=w.expanded||new Set([...w.body.querySelectorAll('.ptcg-event details[open]')].map(n=>n.closest('article').dataset.event));w.expanded=expanded;
-    const actions=el('div',undefined,'ptcg-actions ptcg-view-actions');actions.append(button(t("back_to_summary"),()=>switchWindow(w.player,'reader')));followControl(actions,w.player);historyButton(actions,w);f.append(actions,roleStyle(el('small',roleLabels[v.role]+' · '+clockText.zone),v),el('small',messages.refreshText,'ptcg-refresh-status'));const events=[...v.events].reverse();
-    if(v.activityBreaks.length)f.append(el('small',t("activity_association_breaks")+v.activityBreaks.length+t("unresolved_interaction_positions")));
-    for(const e of events.slice(0,w.limit)){
-      const estimate=s?.byGuid.get(e.guid),article=el('article',undefined,'ptcg-event');article.dataset.event=e.guid;article.append(compactEvent(e,estimate));if(settings.speed)article.append(el('small',speedLabel(estimate)));
-      const details=el('details');details.open=expanded.has(e.guid);details.addEventListener('toggle',()=>{if(!details.isConnected)return;if(details.open)expanded.add(e.guid);else expanded.delete(e.guid);});details.append(el('summary',t("source_details")),el('p',e.text||'—'),el('p',time(e.time,true)+' · '+e.time),el('p',qualityText[e.quality]||t("position_unknown")));
+  function playerEventArticle(e,v,s,expanded){
+      const estimate=s?.byGuid.get(e.guid),article=el('article',undefined,'ptcg-event');article.dataset.event=e.guid;article.append(compactEvent(e,estimate));if(settings.speed)article.append(el('small',t('observed_speed')+': '+speedLabel(estimate)));
+      const details=el('details');details.open=expanded.has(e.guid);details.addEventListener('toggle',()=>{if(!details.isConnected)return;if(details.open)expanded.add(e.guid);else expanded.delete(e.guid);wm.save();});details.append(el('summary',t("source_details")),el('p',e.text||'—'),el('p',time(e.time,true)+' · '+e.time),el('p',qualityText[e.quality]||t("position_unknown")));
       for(const[p,i]of e.portals.map((p,i)=>[p,i])){const line=el('p');if(e.action==='linked')line.append(el('span',i===0?t("origin"):t("destination")));line.append(portalLink(p));details.append(line);}details.append(el('p',t("source_faction_120")+e.wireTeam));
-      for(const link of v.segments.filter(s=>s.toIds.includes(e.guid)))details.append(el('p',t("activity_association_interval")+(link.gapMs/1000).toFixed(3)+t("seconds")+(link.interveningEventIds.length?t("intervening")+link.interveningEventIds.length+t("other_events"):'')+t("intermediate_route_unverified")));
-      for(const gap of v.activityBreaks.filter(g=>g.eventIds.includes(e.guid)))details.append(el('p',gap.reason==='simultaneous-interaction-positions'?t("association_break_simultaneous_interaction_positions"):t("association_break_unresolved_interaction_position")));
+      for(const link of (v.detailSegmentsByGuid?.get(e.guid)||[]))details.append(el('p',t("activity_association_interval")+(link.gapMs/1000).toFixed(3)+t("seconds")+(link.interveningEventIds.length?t("intervening")+link.interveningEventIds.length+t("other_events"):'')+t("intermediate_route_unverified")));
+      for(const gap of (v.detailBreaksByGuid?.get(e.guid)||[]))details.append(el('p',gap.reason==='simultaneous-interaction-positions'?t("association_break_simultaneous_interaction_positions"):t("association_break_unresolved_interaction_position")));
       if(estimate?.minimum){const from=el('p',t("previous_interaction")+time(estimate.fromTime,true)+' · '),to=el('p',t("current_interaction")+time(estimate.time,true)+' · ');for(const p of estimate.fromPortals)from.append(portalLink(p),document.createTextNode(' '));for(const p of estimate.toPortals)to.append(portalLink(p),document.createTextNode(' '));details.append(from,to,el('p',t("interval")+estimate.dt.toFixed(3)+t("seconds_131")+(estimate.kind==='portal-centers'?t("portal_center_distance"):t("validated_shared_region_witness_distance"))+' '+estimate.centerDistanceM.toFixed(3)+' m'),el('p',t("40_m_at_each_endpoint_minimum_required_displacement")+estimate.requiredDistanceM.toFixed(3)+' m'),el('p',t("center_reference")+estimate.centerKmh.toFixed(1)+' km/h'),el('small',estimate.state==='same-portal'?t("same_portal_activity_does_not_verify_stationary_presence"):t("endpoint_assumption_upper_bound")+estimate.minimum.upperKmh.toFixed(1)+t("km_h_region_detail_only_not_used_for_speed_class_or_ghost")),el('small',t("straight_line_displacement_lower_bound_route_and_transport_unknow")));}details.append(el('small',t("source_timestamp_precision")+(e.timestampPrecision==='source-unspecified'?t("unspecified_original_milliseconds_retained"):e.timestampPrecision)));
-      article.append(details);f.append(article);
-    }
-    if(events.length>w.limit)f.append(button(t("more_records"),()=>{w.limit+=settings.pageSize;renderDetail(w);}));if(!events.length)f.append(el('p',t("no_data_yet")));addPlayerSections(f,w);const scroll=w.body.scrollTop;w.body.replaceChildren(f);w.body.scrollTop=scroll;
+      details.append(eventDetails(e));article.append(details);const compact=article.querySelector('.ptcg-compact-event');details.firstChild.replaceChildren(compact);for(const n of [...article.children])if(n!==details)details.append(n);return article;
   }
   function tooltipIdentity(layer){const o=layer.options,p=layer.getLatLng?.();return JSON.stringify([o.ptcgPortalKey||null,o.ptcgNames?.map(n=>n.toLowerCase()).sort()||null,o.ptcgName||o.ptcgPlayer||null,o.ptcgInferenceTime||null,o.ptcgRadius||null,o.ptcgEvidenceKind||null,p?[p.lat,p.lng]:null]);}
   function refreshLocale(){
     refreshLabelCatalog();if(setup.info?.script)setup.info.script.description=t('public_comm_player_activity_tracker_standalone_plugin');if(!wm)return;localizing=true;try{const openTooltips=new Set([clusterLayer,eventLayer,inferenceLayer].filter(Boolean).flatMap(g=>g.getLayers()).filter(l=>l.getTooltip?.()?.isOpen()).map(tooltipIdentity));const focused=document.activeElement,scrollPositions=new Map([...wm.windows.values()].map(w=>[w.id,w.body.scrollTop]));
-    const builders={dashboard:buildDashboard,settings:buildSettings,storage:buildStorage,export:buildExport,about:buildAbout,auto:buildAuto};
+    const builders={dashboard:buildDashboard,acquisition:buildAcquisition,'map-display':buildMapDisplay,data:buildData,settings:buildSharedSettings};
     for(const w of wm.windows.values()){
       const build=builders[w.id];if(!build)continue;
       const controls=[...w.body.querySelectorAll('input,select,textarea')].map((n,index)=>({n,index,value:n.value,checked:n.checked,start:n.selectionStart,end:n.selectionEnd,focused:n===focused,draft:n.dataset.draft})),scroll=w.body.scrollTop;
@@ -4559,8 +5498,8 @@ function createTrackerCore() {
       for(const state of controls){const n=replacements[state.index];if(!n)continue;if(n.dataset.setting==='language'){n.value=settings.language;if(state.focused)n.focus({preventScroll:true});continue;}if(state.n.type==='file'){n.replaceWith(state.n);state.n.setAttribute('aria-label',n.getAttribute('aria-label'));continue;}n.value=state.value;if(state.draft)n.dataset.draft=state.draft;if(n.type==='checkbox')n.checked=state.checked;if(state.focused){n.focus({preventScroll:true});if(state.start!==null)try{n.setSelectionRange(state.start,state.end);}catch(_){}}}
       w.body.scrollTop=scroll;
     }
-    for(const w of wm.windows.values()){if(w.player)wm.setTitle(w,w.player+(w.kind==='detail'?t('details'):''));else if(w.kind==='overlap')wm.setTitle(w,t('overlapping_players'));else if(builders[w.id])wm.setTitle(w,({dashboard:t('overview'),settings:t('display_settings'),storage:t('storage'),export:t('csv_export'),about:t('about'),auto:t('auto_refresh')})[w.id]);}
-    if(pinnedPortal){const pin=pinnedPortal;pin.center.textContent=t('center_on_screen');pin.more.textContent=t('more');pin.end.textContent=t('all_shown');pin.rows.setAttribute('aria-label',t('portal_activity_records'));}
+    for(const w of wm.windows.values()){if(w.player)wm.setTitle(w,w.player+(w.kind==='detail'?t('details'):''));else if(w.kind==='overlap')wm.setTitle(w,t('overlapping_players'));else if(builders[w.id])wm.setTitle(w,primaryTitles()[w.id]);}
+    if(pinnedPortal){const pin=pinnedPortal;pin.center.textContent=t('center_on_screen');pin.more.textContent=t('more_portal_events');pin.end.textContent=t('all_shown');pin.rows.setAttribute('aria-label',t('portal_activity_records'));}
     wm.localize();renderFollow();for(const b of document.querySelectorAll('[data-workspace-refresh]'))b.textContent=t('refresh');fullRedraw=true;render();renderDashboard();renderAuto();updateStorageSummary();updateExportPreview();for(const w of wm.windows.values()){if(w.player){if(w.kind==='detail')renderDetail(w);else renderReader(w);}else if(w.kind==='overlap')renderOverlap(w);w.body.scrollTop=scrollPositions.get(w.id)||0;}for(const g of [clusterLayer,eventLayer,inferenceLayer])for(const l of g.getLayers())if(openTooltips.has(tooltipIdentity(l)))l.openTooltip?.();wm.save();}finally{localizing=false;}
   }
   api.setLanguage=value=>{if(!['auto','en','zh-TW','zh-CN','ja'].includes(value))throw Error('Unsupported language');if(settings.language===value)return;settings.language=value;saveSettings();refreshLocale();};
@@ -4571,14 +5510,9 @@ function createTrackerCore() {
   function buildFactionControls(w){const box=el('fieldset',undefined,'ptcg-faction-controls');box.dataset.factionControls='1';box.append(el('legend',t('faction_pin_controls')));const presets=el('div',undefined,'ptcg-faction-presets');for(const [value,key]of [[0,'faction_original'],[-120,'faction_ccw120'],[-135,'faction_ccw135'],[120,'faction_cw120'],[135,'faction_cw135']]){const b=button(t(key),()=>setFactionPresentation({factionPinAngle:value}));b.dataset.factionPreset=String(value);b.setAttribute('aria-pressed',String(value===settings.factionPinAngle));presets.append(b);}box.append(presets);
     for(const [key,title,min,max,type]of [['factionPinAngle','faction_angle',-180,180,'range'],['factionPinAngle','faction_angle',-180,180,'number'],['factionLabelGap','faction_gap',0,20,'number']]){const label=el('label',t(title),'ptcg-field'),input=el('input');input.type=type;input.min=min;input.max=max;input.step='any';input.value=settings[key];input.dataset.factionSetting=key;input.setAttribute('aria-label',t(title)+(type==='range'?' · '+t('faction_slider'):''));input.addEventListener('input',()=>{if(localizing)return;const n=input.value===''?NaN:Number(input.value);if(Number.isFinite(n)&&n>=min&&n<=max)setFactionPresentation({[key]:n},input);});input.addEventListener('change',()=>{if(localizing)return;const n=input.value===''?NaN:Number(input.value);if(!setFactionPresentation({[key]:n}))syncFactionControls();});label.append(input);box.append(label);}box.append(el('small',t('faction_orientation_help')));w.body.append(box);
   }
-  function buildSettings(w){
-    w.body.append(field(t('language'),'language',[['auto','Auto'],['en','English'],['zh-TW','繁體中文'],['zh-CN','简体中文'],['ja','日本語']],refreshLocale));
-    const roles=el('fieldset'),legend=el('legend',t('visible_factions_accounts'));roles.append(legend);for(const role of ['RES','ENL','MACHINA','NIA','OTHER']){const label=el('label',undefined,'ptcg-check'),input=el('input');input.type='checkbox';input.dataset.roleVisibility=role;input.checked=!!settings.roleVisibility[role];input.addEventListener('change',()=>{if(localizing)return;settings.roleVisibility[role]=input.checked;saveSettings();if(input.checked)layers[role].addTo(window.map);else window.map.removeLayer(layers[role]);requestRender(true);});label.append(input,factionBadge(role),document.createTextNode(roleLabels[role]));roles.append(label);}w.body.append(roles);buildFactionControls(w);
-    const grid=el('div',undefined,'ptcg-grid');for(const[title,key]of[[t("player_names"),'names'],[t("faction_markers"),'markers'],[t("activity_times"),'labelTime'],[t('interaction_connections'),'paths'],[t("activity_events"),'events'],[t('historical_positions'),'historicalPositions'],[t('historical_regions'),'historicalRegions'],[t('inferred_connections'),'historicalPaths'],[t("fade_older_activity"),'fade'],[t("speed_estimates"),'speed']])grid.append(checkbox(title,key));
-    w.body.append(field(t('inference_reference'),'inferenceReference',[['local-average',t('local_average_choice')],['minimum-movement',t('minimum_movement_choice')],['both',t('both_references')]]));w.body.append(field(t('primary_map_result'),'historicalPrimary',[['minimum-movement',t('minimum_movement_choice')],['local-average',t('local_average_choice')]]),field(t('attack_assumption'),'historicalScenario',[['interaction',t('interaction_baseline')],['XMP',t('xmp_assumption')]]));const historyStatus=el('small');historyStatus.dataset.ptcgHistoryStatus='1';w.body.append(historyStatus,el('small',t('history_controls_help')));w.body.append(grid,el('small',t('historical_inspection_help')),field(t("time_format"),'timeMode',[['relative',t("relative_time")],['absolute',t("absolute_time")]]),field(t("lookback"),'hours',hourOptions),field(t("detail_rows"),'pageSize',[[10,t("10_records")],[20,t("20_records")],[40,t("40_records")]]));
-    w.body.append(el('small',t("time_zone")+clockText.zone));const mode=el('label',undefined,'ptcg-check'),live=el('input');live.type='checkbox';live.checked=liveObservation;live.dataset.liveObservation='1';const at=el('input');at.type='datetime-local';at.step='.001';at.dataset.observationTime='1';at.value=clockText.absolute(observationT).replaceAll('/','-').replace(' ','T');live.addEventListener('change',()=>{if(localizing)return;if(live.checked)api.setObservationTime(null);else api.setObservationTime(Date.now());syncObservationInputs();});at.addEventListener('change',()=>{if(localizing)return;const t=Date.parse(at.value);if(Number.isFinite(t)){live.checked=false;api.setObservationTime(t);syncObservationInputs();}});mode.append(live,document.createTextNode(t("live_observation")));w.body.append(mode,at,el('small',t('live_fixed_hint')));syncObservationInputs();buildXMP(w);
-  }
-  function persistenceChanged(){activityStore.persistenceChanged();if(settings.persist){messages.storageState=()=>t("saving");enqueue([...model.events.values()].filter(e=>!persisted.has(e.guid)),[...model.conflicts.values()].filter(c=>!savedConflicts.has(c.id)),activityStore.allScopes());}else messages.storageState=()=>t("new_activity_stays_in_this_page");}
+  function buildSettings(w){buildSharedSettings(w);}
+
+  function persistenceChanged(){backtrackPolicy++;if(!settings.persist)try{backtrackArchiveTx?.abort();}catch(_){}activityStore.persistenceChanged();if(settings.persist){messages.storageState=()=>t("saving");enqueue([...model.events.values()].filter(e=>!persisted.has(e.guid)),[...model.conflicts.values()].filter(c=>!savedConflicts.has(c.id)),activityStore.allScopes());}else messages.storageState=()=>t("new_activity_stays_in_this_page");}
   function buildStorage(w){const summary=el('div');summary.dataset.storage='1';w.body.append(checkbox(t("automatically_save_activity"),'persist'),summary,checkbox(t("enable_storage_limits"),'storageLimits'),numberSetting(t("retention_days_0_unlimited"),'retentionDays',0,36500),numberSetting(t("record_limit_0_unlimited"),'maxRecords',0,10000000),numberSetting(t("capacity_mib_0_unlimited"),'maxMegabytes',0,100000),button(t("review_and_prune_old_activity"),pruneWithConfirmation),button(t("clear_activity_data"),clearWithConfirmation));const file=el('input');file.type='file';file.accept='.json,application/json';file.dataset.rawImport='1';file.setAttribute('aria-label',t("import_raw_activity_json"));file.addEventListener('change',async()=>{if(!file.files[0])return;const epoch=dataGeneration;try{const text=await file.files[0].text();if(epoch!==dataGeneration||clearing)throw Error(t("data_cleared_import_cancelled"));const result=api.importRaw(JSON.parse(text));messages.storageState=()=>t("imported")+result.accepted+t("records_conflicts")+result.conflicts;}catch(_){messages.storageError=()=>t("invalid_import_format_existing_data_retained");}file.value='';requestRender();});w.body.append(el('small',t("import_raw_json_retain_existing_activity")),file,button(t("complete_raw_backup_all_activity"),()=>downloadRaw()));}
   function backupFilter(e,options){return (!options.category||categoryMatches(core.role(e),options.category))&&(options.player===undefined||e.player.toLowerCase()===String(options.player).toLowerCase())&&(!Number.isFinite(options.from)||e.time>=options.from)&&(!Number.isFinite(options.to)||e.time<=options.to);}
   api.exportRaw=(options={})=>{const filtered=options.player!==undefined||!!options.category&&options.category!=='all'||Number.isFinite(options.from)||Number.isFinite(options.to),records=[...model.events.values()].filter(e=>backupFilter(e,options)),conflicts=[...model.conflicts.values()].filter(c=>[c.original,c.incoming].every(e=>e&&backupFilter(e,options))),ids=new Set([...records.map(e=>e.guid),...conflicts.map(c=>c.guid)]);const backup={version:VERSION,records,conflicts,observationScopes:filtered?activityStore.filterScopes(activityStore.allScopes(),ids,true):activityStore.allScopes()};if(filtered)backup.filtered=true;if(containsPrivateFields(backup))throw Error(t("backup_contains_sign_in_session_fields_raw_data_retained_no_expor"));return backup;};
@@ -4592,7 +5526,7 @@ function createTrackerCore() {
   }
   function exportEvents(scope,category=exportCategory,hours=settings.hours){const now=observationT;if(!['all','single'].includes(scope))return [];return [...model.events.values()].filter(e=>e.time>=now-hours*3600000&&e.time<=now&&categoryMatches(core.role(e),category)&&(scope!=='single'||e.player.toLowerCase()===settings.selected.toLowerCase())).sort((a,b)=>a.time-b.time||a.guid.localeCompare(b.guid));}
   api.csvForScope=(scope,category='all',hours=settings.hours)=>core.csv(exportEvents(scope,category,hours));
-  function updateExportPreview(){const w=wm.get('export');if(!w)return;w.body.querySelector('[data-export-preview]').textContent=t("lookback_188")+settings.hours+t("hours_189")+(exportScope==='single'?(settings.selected||t("no_player_selected"))+' · ':'')+exportEvents(exportScope).length+t("records");w.body.querySelector('[data-export-status]').textContent=messages.exportState;}
+  function updateExportPreview(){const w=wm.get('export');if(!w||!w.body.querySelector('[data-export-preview]'))return;w.body.querySelector('[data-export-preview]').textContent=t("lookback_188")+settings.hours+t("hours_189")+(exportScope==='single'?(settings.selected||t("no_player_selected"))+' · ':'')+exportEvents(exportScope).length+t("records");w.body.querySelector('[data-export-status]').textContent=messages.exportState;}
   function downloadRaw(options){let data;try{data=api.exportRaw(options);}catch(e){messages.storageError=()=>i18n.status(e.message);messages.exportState=()=>i18n.status(e.message);requestRender();return;} const url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'})),a=el('a');a.href=url;a.download='player-tracker-'+VERSION+(data.filtered?'-filtered':'-complete')+'-raw.json';a.click();const timer=setTimeout(()=>URL.revokeObjectURL(url),60000);cleanup.push(()=>{clearTimeout(timer);URL.revokeObjectURL(url);});}
   function pruneWithConfirmation(){if(!settings.storageLimits||!settings.retentionDays){messages.storageState=()=>t("enable_storage_limits_and_retention_days_first_0_is_unlimited");requestRender();return;}const cutoff=Date.now()-settings.retentionDays*86400000,events=[...model.events.values()].filter(e=>e.time<cutoff);if(!events.length){messages.storageState=()=>t("no_activity_needs_pruning");requestRender();return;}const dates=[events.reduce((n,e)=>Math.min(n,e.time),Infinity),events.reduce((n,e)=>Math.max(n,e.time),-Infinity)];if(!window.confirm(t("prune")+events.length+t("activity_records")+time(dates[0],true)+' ～ '+time(dates[1],true)+t("and_related_scopes_conflicts_unexported_data_will_be_removed_othe")))return;return clearData(events.map(e=>e.guid));}
   function exportCSV(scope){const events=exportEvents(scope);if(!events.length){messages.exportState=()=>t("no_data_yet");updateExportPreview();return;}try{const url=URL.createObjectURL(new Blob([core.csv(events)],{type:'text/csv;charset=utf-8'})),a=el('a');a.href=url;a.download='player-tracker-advanced-khresist-'+new Date().toISOString().replace(/[:.]/g,'-')+'.csv';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);messages.exportState=()=>t("generated")+events.length+t("records");}catch(e){messages.exportState=()=>t("export_failed");}updateExportPreview();}
@@ -4601,20 +5535,14 @@ function createTrackerCore() {
     const old=drawn.get(name);if(old){layers[old.ptcgRole].removeLayer(old);drawn.delete(name);}const v=sharedView(name,settings.hours);
     if(core.isSystem(v.last)||!window.map.hasLayer(masterLayer)||!matches(name,v)||(!v.locations.length&&!v.segments.length)||window.map.getZoom()<MIN_ZOOM||!window.map.hasLayer(layers[v.role]))return;
     const group=L.layerGroup();group.ptcgRole=v.role;group.ptcgView=v;
-    if(settings.paths)for(const s of v.segments){if(!historicalModel.rawConnectionAllowed(v.events,name,s))continue;const fade=settings.fade?Math.max(.28,1-(observationT-s.to.time)/(settings.hours*3600000)):1;motionLine([s.from.position,s.to.position],v.role,'raw',group,{opacity:fade,smoothFactor:0,ptcgPlayer:name,ptcgFromIds:s.fromIds,ptcgToIds:s.toIds,ptcgInterveningIds:s.interveningEventIds,ptcgGapMs:s.gapMs});}
+    if(settings.paths)for(const s of v.segments){const fade=settings.fade?Math.max(.28,1-(observationT-s.to.time)/(settings.hours*3600000)):1;motionLine([s.from.position,s.to.position],v.role,'raw',group,{opacity:fade,smoothFactor:0,ptcgPlayer:name,ptcgFromIds:s.fromIds,ptcgToIds:s.toIds,ptcgInterveningIds:s.interveningEventIds,ptcgGapMs:s.gapMs,ptcgSourceTime:s.to.time,ptcgBaseOpacity:1,ptcgAgeFloor:.28});}
     group.addTo(layers[v.role]);drawn.set(name,group);counters.redraws++;
   }
   const panes={regions:'ptcg-history-regions',evidence:'ptcg-evidence-circles',raw:'ptcg-activity-paths',eventLines:'ptcg-event-lines',inferredPaths:'ptcg-inference-paths',events:'ptcg-event-icons',players:'ptcg-player-icons',inferred:'ptcg-inferred-icons',clusters:'ptcg-player-clusters',tooltip:'ptcg-hover'};
   function registerPanes(){const order={regions:410,evidence:440,raw:420,eventLines:430,inferredPaths:450,events:610,players:620,inferred:630,clusters:660,tooltip:680};for(const[key,z]of Object.entries(order)){const p=window.map.getPane(panes[key])||window.map.createPane(panes[key]);p.style.zIndex=String(z);if(['regions','raw','eventLines','inferredPaths','tooltip'].includes(key))p.style.pointerEvents='none';}}
-  function eventTooltip(items,heading=''){
-    const node=el('div',undefined,'ptcg-hover-content');if(heading)node.append(el('strong',heading));
-    const names=[...new Map(items.filter(x=>!core.isSystem(x.event)).map(x=>[x.event.player.trim().toLowerCase(),x.event.player])).values()];if(names.length>1)node.append(el('small',names.length+t("players_200")+items.length+t("activity_events_201")));
-    const rows=[...items].sort((a,b)=>b.event.time-a.event.time).slice(0,5);for(const {event:e,portal}of rows){const row=el('div',undefined,'ptcg-hover-row'),name=el('strong',e.player);name.style.color=roleColors[core.role(e)];if(['RES','ENL'].includes(core.role(e)))name.prepend(factionBadge(core.role(e)));row.append(name,el('span',time(e.time)),eventSymbol(e),el('span',shortActions[e.action]));if(portal||e.portals[0])row.append(el('small',(portal||e.portals[0]).name||(portal||e.portals[0]).plain||t("unnamed_portal")));node.append(row);}if(items.length>rows.length)node.append(el('small',t("also")+(items.length-rows.length)+t("records_click_to_view")));
-    return node;
-  }
   function bindHover(marker,items,heading=''){marker.bindTooltip(()=>eventTooltip(items,heading),{pane:panes.tooltip,className:'ptcg-hover',direction:'top',offset:[0,-12],interactive:false,opacity:1});return marker;}
   function derivedEnabled(){return settings.historicalPositions||settings.historicalRegions||settings.historicalPaths;}
-  function computationEnabled(name){return derivedEnabled()||wm?.get('player:'+name.toLowerCase())?.viewSection==='inference'||inferencePending.has(name);}
+  function computationEnabled(name){return (mapScope.kind==='player'&&mapScope.player===name&&(derivedEnabled()||settings.paths&&settings.historicalScenario==='XMP'))||wm?.get('player:'+name.toLowerCase())?.viewSection==='inference'||inferencePending.has(name);}
   function closeOwnedTooltip(layer){const tooltip=layer.getTooltip?.();layer.closeTooltip?.();if(tooltip&&!tooltip.isOpen())tooltip.getElement()?.remove();}
   function clearClusterGraphics(){for(const layer of clusterLayer.getLayers()){closeOwnedTooltip(layer);layer.unbindTooltip?.();}clusterLayer.clearLayers();}
   function clearInferenceGraphics(){for(const layer of inferenceLayer.getLayers()){closeOwnedTooltip(layer);layer.unbindTooltip?.();}inferenceLayer.clearLayers();}
@@ -4627,23 +5555,68 @@ function createTrackerCore() {
       if(unique.size>1){
         const names=[...unique.values()].map(v=>v.name).sort(),id=JSON.stringify(names),anchor=members.slice().sort((a,b)=>a.view.name.localeCompare(b.view.name)||a.event.guid.localeCompare(b.event.guid))[0].event.position;
         clusterRecords.set(id,names);const ghost=[...unique.values()].some(v=>speeds(v)?.ghost||speeds(v)?.ghostCandidate),items=members.map(m=>({event:m.event,portal:m.event.portals[0]}));
-        const marker=L.marker(anchor,{pane:panes.clusters,icon:L.divIcon({className:'ptcg-cluster'+(ghost?' ptcg-ghost':''),html:(settings.markers?artwork.pin([...unique.values()].map(v=>v.role),unique.size,false,settings.factionPinAngle):'')+'<span class="ptcg-label ptcg-group-label ptcg-observed-label" style="'+observedLabelPlacement()+'">'+unique.size+t("players_205")+(ghost?t("unusual_speed_candidate_206"):'')+'</span>',iconSize:artwork.observedSize,iconAnchor:artwork.observedAnchor}),ptcgNames:names,ptcgContributions:items.map(x=>({player:x.event.player,guid:x.event.guid,time:x.event.time}))});bindHover(marker,items,t("active_players"));marker.on('click',e=>{if(!forwardEvidencePortalClick(e))openOverlap(id,names.slice());});marker.addTo(clusterLayer);
+        const marker=L.marker(anchor,{pane:panes.clusters,opacity:eventAge(Math.max(...members.map(m=>m.event.time))),ptcgSourceTime:Math.max(...members.map(m=>m.event.time)),ptcgBaseOpacity:1,icon:L.divIcon({className:'ptcg-cluster'+(ghost?' ptcg-ghost':''),html:(settings.markers?artwork.pin([...unique.values()].map(v=>v.role),unique.size,false,settings.factionPinAngle):'')+'<span class="ptcg-label ptcg-group-label ptcg-observed-label" style="'+observedLabelPlacement()+'">'+factionCountsNode([...unique.values()]).outerHTML+(ghost?t("unusual_speed_candidate_206"):'')+'</span>',iconSize:artwork.observedSize,iconAnchor:artwork.observedAnchor}),ptcgNames:names,ptcgContributions:items.map(x=>({player:x.event.player,guid:x.event.guid,time:x.event.time}))});bindHover(marker,items,t("active_players"));marker.on('click',e=>{if(!forwardEvidencePortalClick(e))openOverlap(id,names.slice());});marker.addTo(clusterLayer);
       }else for(const p of members){
         const v=p.view,e=p.event,sp=speeds(v),ghost=!!(sp?.ghost||sp?.ghostCandidate),parts=[];
         if(settings.markers)parts.push(artwork.pin([v.role],1,false,settings.factionPinAngle));
-        const label=[settings.names?v.name:'',settings.labelTime?time(e.time):'',ghost?t("unusual_speed_candidate_106"):'',v.ambiguous?t("multiple_simultaneous_positions"):'',v.uncertainLatest?t("position_unknown"):''].filter(Boolean).join(' · ');
+        const label=[settings.names?escape(v.name):'',settings.labelTime?'<span data-map-time="'+e.time+'">'+escape(time(e.time))+'</span>':'',ghost?t("unusual_speed_candidate_106"):'',v.ambiguous?t("multiple_simultaneous_positions"):'',v.uncertainLatest?t("position_unknown"):''].filter(Boolean).join(' · ');
         const placement=observedLabelPlacement();
-        if(label)parts.push('<span class="ptcg-label ptcg-observed-label" style="'+placement+'color:'+roleColors[v.role]+';border-color:'+roleColors[v.role]+'">'+escape(label)+'</span>');if(!parts.length)continue;
-        const marker=L.marker(e.position,{pane:panes.players,icon:L.divIcon({className:'ptcg-pin'+(ghost?' ptcg-ghost-pin':''),html:parts.join(''),iconSize:artwork.observedSize,iconAnchor:artwork.observedAnchor}),opacity:settings.fade?Math.max(.3,1-(observationT-e.time)/(settings.hours*3600000)):1,ptcgName:v.name,title:v.name});bindHover(marker,[{event:e,portal:e.portals[0]}],t("observed_activity"));marker.on('click',e=>{if(!forwardEvidencePortalClick(e))openReader(v.name);});marker.addTo(clusterLayer);
+        if(label)parts.push('<span class="ptcg-label ptcg-observed-label" style="'+placement+'color:'+roleColors[v.role]+';border-color:'+roleColors[v.role]+'">'+label+'</span>');if(!parts.length)continue;
+        const marker=L.marker(e.position,{pane:panes.players,icon:L.divIcon({className:'ptcg-pin'+(ghost?' ptcg-ghost-pin':''),html:parts.join(''),iconSize:artwork.observedSize,iconAnchor:artwork.observedAnchor}),opacity:settings.fade?Math.max(.3,1-(observationT-e.time)/(settings.hours*3600000)):1,ptcgName:v.name,ptcgSourceTime:e.time,ptcgBaseOpacity:1,title:v.name});bindHover(marker,[{event:e,portal:e.portals[0]}],t("observed_activity"));marker.on('click',e=>{if(!forwardEvidencePortalClick(e))openReader(v.name);});marker.addTo(clusterLayer);
       }
     }
   }
   function openOverlap(id,members=clusterRecords.get(id)){if(!members?.length)return null;const names=[...new Map(members.map(n=>[n.toLowerCase(),canonical(n)])).values()].sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase())),stableId=JSON.stringify(names.map(n=>n.toLowerCase())),w=wm.open('overlap:'+stableId,t('overlapping_players'),w=>{w.kind='overlap';w.members=names.slice();const summary=el('p'),state=el('small'),list=el('div');summary.dataset.overlapSummary='1';state.dataset.overlapState='1';list.dataset.overlapPlayers='1';w.body.append(summary,state,list);},350,420);renderOverlap(w);wm.save();return w;}
   function renderOverlap(w){const names=w.members||[],views=names.map(n=>sharedView(n,settings.hours)),visible=views.filter(v=>v.last&&matches(v.name,v)&&window.map.hasLayer(masterLayer)&&window.map.hasLayer(layers[v.role])).length,selected=names.filter(n=>settings.overviewSelection.some(x=>x.toLowerCase()===n.toLowerCase())).length;
-    w.body.querySelector('[data-overlap-summary]').textContent=t('selected_selected_group_members_visible_visible',{selected,members:names.length,visible});w.body.querySelector('[data-overlap-state]').textContent=w.groupReleased?t('group_selection_released_activate_this_tab_to_select_again'):!visible?t('no_eligible_activity_group_selection_retained'):'';updatePlayerRows(w,w.body.querySelector('[data-overlap-players]'),views);
+    w.body.querySelector('[data-overlap-summary]').textContent=t('selected_selected_group_members_visible_visible',{selected,members:names.length,visible});const summary=w.body.querySelector('[data-overlap-summary]'),selectionSummary=summary.textContent,visibleViews=views.filter(v=>v.last&&matches(v.name,v)&&window.map.hasLayer(masterLayer)&&window.map.hasLayer(layers[v.role]));summary.replaceChildren(factionCountsNode(visibleViews),el('small',selectionSummary));if(JSON.stringify(presentation.counts(views))!==JSON.stringify(presentation.counts(visibleViews))){const details=el('details');details.append(el('summary',t('group_members')),factionCountsNode(views));summary.append(details);}w.body.querySelector('[data-overlap-state]').textContent=w.groupReleased?t('group_selection_released_activate_this_tab_to_select_again'):!visible?t('no_eligible_activity_group_selection_retained'):'';updatePlayerRows(w,w.body.querySelector('[data-overlap-players]'),views);
   }
 
   api.clusterNames=()=>[...clusterRecords.values()];
+
+    const displayModel=createTrackerDisplay(core);const presentation=createTrackerPresentation((a,b)=>inferenceModel.geoDistance(a,b));const eventEvidence=createTrackerEvidence();let evidenceRevision=-1,evidenceAt=-Infinity,evidenceNextAt=Infinity,evidenceCache=null;
+  function resolvedEvidence(){if(evidenceCache&&evidenceRevision===model.revision&&observationT>=evidenceAt&&observationT<evidenceNextAt)return evidenceCache;const rows=[];evidenceNextAt=Infinity;for(const e of model.events.values())if(e.time<=observationT)rows.push(e);else evidenceNextAt=Math.min(evidenceNextAt,e.time);evidenceRevision=model.revision;evidenceAt=observationT;evidenceCache=eventEvidence.resolve(rows);return evidenceCache;}
+
+  function eventDetails(e){const node=el('div',undefined,'ptcg-event-evidence'),info=resolvedEvidence().byGuid.get(e.guid);node.append(el('p',eventEvidence.fullText(e)),el('p',clockText.absolute(e.time)+' · '+e.time),el('p',e.player+' · actor '+(e.actorTeam||e.wireTeam)+' · object '+(e.objectFactions||[]).map(x=>x.plain||x.team).join(', ')),el('p',actionText(e)+' · '+e.source+' · GUID '+e.guid));for(const p of e.portals||[]){const line=el('p');line.append(portalLink(p));node.append(line);}
+
+    if(info?.attack){const a=info.attack,line=el('p',(i18n.locale()==='en'?'Attacked Portal (inferred)':'受攻擊 Portal（證據推定）')+': '+a.state+' · '+a.reason+' ');if(a.portal)line.append(portalLink(a.portal));node.append(line,el('p','Support: '+a.candidates.flatMap(c=>c.sources).map(s=>s.guid+' @ '+clockText.absolute(s.time)).join('; ')));}
+    if(info?.flip)node.append(el('p','Flip: '+info.flip.state+' · operator '+(info.flip.operator||'unassigned')+' · '+info.flip.mechanism+' · '+info.flip.operatorAttribution),el('p','Sources: '+info.flip.sourceGuids.join(', ')));
+    const raw=el('details');raw.append(el('summary',i18n.locale()==='en'?'Original structured record':'原始結構資料'),el('pre',JSON.stringify(e.raw||e,null,2)));node.append(raw);return node;
+  }
+  function readingAnchor(container,selector='[data-event]'){const bounds=container.getBoundingClientRect(),rows=[...container.querySelectorAll(selector)],row=rows.find(r=>r.getBoundingClientRect().bottom>bounds.top);return {id:row?.dataset.event||row?.dataset.portalEvent,offset:row?row.getBoundingClientRect().top-bounds.top:0,scroll:container.scrollTop,ids:rows.map(r=>r.dataset.event||r.dataset.portalEvent),focus:document.activeElement};}
+  function restoreAnchor(container,a,selector='[data-event]'){const rows=[...container.querySelectorAll(selector)],id=r=>r.dataset.event||r.dataset.portalEvent;let row=rows.find(r=>id(r)===a.id);if(!row&&a.id){const index=a.ids.indexOf(a.id);row=rows.find(r=>a.ids.indexOf(id(r))>index)||rows.at(-1);}if(row)container.scrollTop+=row.getBoundingClientRect().top-container.getBoundingClientRect().top-a.offset;else container.scrollTop=a.scroll;if(a.focus?.isConnected&&document.activeElement!==a.focus)a.focus.focus({preventScroll:true});}
+  function updateEventTimes(body){for(const n of body.querySelectorAll('[data-event-time]')){const text=time(Number(n.dataset.eventTime));if(n.textContent!==text&&!window.getSelection()?.containsNode(n,true))n.textContent=text;}for(const n of body.querySelectorAll('.ptcg-refresh-status'))if(n.textContent!==messages.refreshText)n.textContent=messages.refreshText;}
+  function actionText(e){const length=presentation.length(e);const action=presentation.eventAction(e);return (shortActions[action]||action)+(length?' · '+(length.state==='known'?length.text.replace(/ ([mk]?m)$/, '\u00a0$1'):t('link_distance_unknown')):'');}
+  let presentationEvidence=null,presentationResolution=null;
+  function flipResolution(){const resolved=resolvedEvidence();if(presentationEvidence!==resolved){presentationEvidence=resolved;presentationResolution=presentation.flips([...model.events.values()].filter(e=>e.time<=observationT),{manual:eventEvidence.manual,resolveResult:resolved},[...model.conflicts.values()]);}return presentationResolution;}
+  function displayEvents(events,player){return presentation.fold(events.map(event=>({event,portal:event.portals[0]})),flipResolution(),{player,accept:e=>e.time<=observationT&&e.time>=observationT-settings.hours*3600000});}
+  function flipEvidenceDetails(flip){const node=el('div');node.append(el('p',t(flip.operator?'flip_manual_evidence':'flip_system_evidence')+(flip.operator?' · '+flip.operator:'')));const detail=el('details');detail.append(el('summary',t('source_details')),el('pre',JSON.stringify(flip,null,2)));node.append(detail);return node;}
+  function compactFlip(item){const row=el('div',undefined,'ptcg-compact-event'),stamp=el('span',time(item.flip.time));stamp.dataset.eventTime=item.flip.time;const title=el('span',t('flip_summary')),portal=el('span',undefined,'ptcg-compact-portal');if(item.flip.portal)portal.append(portalLink(item.flip.portal));row.append(stamp,title,portal);return row;}
+  function flipArticle(item,v,s,expanded){const article=el('article',undefined,'ptcg-event'),details=el('details'),summary=el('summary');article.dataset.event=item.event.guid;article.dataset.rowKey=item.flip.id;summary.append(compactFlip(item));details.open=expanded.has(item.flip.id);details.addEventListener('toggle',()=>{if(!details.isConnected)return;if(details.open)expanded.add(item.flip.id);else expanded.delete(item.flip.id);wm.save();});details.append(summary,el('p',t('raw_display_count',{raw:item.batch.length,display:1})),flipEvidenceDetails(item.flip));for(const child of item.batch)details.append(playerEventArticle(child.event,v,s,expanded));article.append(details);return article;}
+  function playerSpeedSummary(v,s){const node=el('section');node.dataset.playerSpeedSummary='1';if(!settings.speed){node.hidden=true;return node;}const result=s?.latest||s?.result;node.append(el('strong',t('player_speed_title')));
+    if(!result){node.append(el('p',t('speed_insufficient')+' · '+(i18n.status(s?.status)||t('insufficient_data'))));return node;}
+    if(result.state==='computed')node.append(el('p',t('required_speed',{speed:result.minimum.lowerKmh.toFixed(1),distance:result.requiredDistanceM.toFixed(1)})));
+    else node.append(el('p',speedLabel(result)),el('small',t('speed_zero_warning')));
+    node.append(el('p',t(result.kind==='portal-centers'?'center_speed':'witness_speed',{speed:result.centerKmh.toFixed(1),distance:result.centerDistanceM.toFixed(1)})),el('p',clockText.absolute(result.fromTime)+' → '+clockText.absolute(result.time)+' · '+result.dt.toFixed(3)+' '+t('seconds')));
+    if(result.state==='computed'&&result.level)node.append(el('small',t('speed_category')+i18n.status(result.level)));if(result.longGap)node.append(el('p',t('long_interval_intermediate_route_unknown')));if(result.olderThanLatestSlice||s?.slices?.at(-1)?.time>result.time)node.append(el('p',t('earlier_valid_estimate_latest_interval_unresolved')));
+    const source=el('details');source.append(el('summary',t('source_details')),el('small',t('speed_summary_help')));for(const id of [...new Set(result.fromIds.concat(result.toIds))]){const e=model.events.get(id);if(e)source.append(eventDetails(e));}node.append(source);return node;
+  }
+  function relationLabel(e,p){const r=displayModel.relation(e,portalKey(p),portalKey,core.parseLink);return r&&r!=='unrelated'?t('portal_relation_'+r):'';}
+  function updatePortalHeader(pin,all,batches){const stats=displayModel.portalStats(all.map(i=>i.event),pin.key,portalKey,core.parseLink,presentation.eventAction,batches.length),signature=JSON.stringify([stats,i18n.locale(),settings.hours,liveObservation,liveObservation?null:observationT,mapScope,settings.faction,settings.roleVisibility,pin.center.disabled]);if(pin.headerSignature===signature)return;pin.headerSignature=signature;pin.stats.dataset.portalStats=JSON.stringify(stats);const open=pin.stats.querySelector('details')?.open||false,summary=el('div'),detail=el('details');detail.open=open;
+    summary.append(el('strong',t('portal_totals',{players:stats.uniquePlayers,raw:stats.rawCount,display:stats.displayCount,system:stats.systemCount})),el('p','RES '+stats.attributes.RES+' · ENL '+stats.attributes.ENL+' · Machina '+stats.attributes.MACHINA+' · NIA '+stats.attributes.NIA+' · '+t('other_count',{n:stats.attributes.OTHER})),el('small',t('portal_loaded_scope',{hours:settings.hours})+(liveObservation?' · '+t('live_observation'):' · '+clockText.absolute(observationT))));
+    if(stats.relations.incoming||stats.relations.outgoing||stats.relations.undirected)summary.append(el('p',t('portal_link_roles',stats.relations)));const categoryLine=el('p',t('portal_raw_categories'));categoryLine.dataset.portalRawCategories='1';for(const [action,count]of Object.entries(stats.categories))categoryLine.append(el('span',(shortActions[action]||action)+' '+count+' · '));summary.append(categoryLine);detail.append(el('summary',t('portal_stat_details')));const list=el('div');for(const actor of stats.actors){const line=el('p');line.append(button(actor.name,()=>openReader(actor.name)),document.createTextNode(actor.role+' · '+actor.count+' '+t('records')));list.append(line);}detail.append(list);pin.stats.replaceChildren(summary,detail);if(pin.center.disabled)pin.stats.append(el('small',t('coordinates_unavailable_249')));
+  }
+  function renderUnifiedActivity(w){if(w.viewSection==='inference'){renderHistoricalReader(w);return;}w.kind='reader';const v=sharedView(w.player),s=speeds(v),active=document.activeElement,anchor=readingAnchor(w.body,'[data-presentation-row]');w.expanded=w.expanded instanceof Set?w.expanded:new Set(w.expanded||[]);w.limit||=w.summaryRows||settings.summaryRows;
+    const items=displayEvents([...v.events].reverse(),w.player),signature=JSON.stringify([i18n.locale(),v.events.map(e=>[e.guid,e.identity]),model.revision,w.limit,settings.speed,settings.timeMode,follow.target,follow.paused,follow.manual]);
+    if(w.activitySignature===signature&&w.body.querySelector('[data-presentation-row]')){updateEventTimes(w.body);updateOrdinaryInferenceStatus(w);restoreAnchor(w.body,anchor,'[data-presentation-row]');return;}
+    v.detailSegmentsByGuid=new Map();for(const segment of v.segments)for(const id of segment.toIds){if(!v.detailSegmentsByGuid.has(id))v.detailSegmentsByGuid.set(id,[]);v.detailSegmentsByGuid.get(id).push(segment);}v.detailBreaksByGuid=new Map();for(const gap of v.activityBreaks)for(const id of gap.eventIds){if(!v.detailBreaksByGuid.has(id))v.detailBreaksByGuid.set(id,[]);v.detailBreaksByGuid.get(id).push(gap);}const oldRows=new Map([...w.body.querySelectorAll('[data-presentation-row]')].map(n=>[n.dataset.rowKey,n])),f=document.createDocumentFragment(),actions=el('div',undefined,'ptcg-actions');playerHeading(w,v);followControl(actions,w.player);historyButton(actions,w);f.append(actions);addPlayerSections(f,w);f.append(roleStyle(el('small',roleLabels[v.role]+' · '+clockText.zone),v));
+    const pref=el('label',t('activity_rows'),'ptcg-field'),select=el('select');select.dataset.summaryRows='1';for(const n of [3,5,10]){const o=el('option',String(n));o.value=n;select.append(o);}select.value=w.summaryRows||settings.summaryRows;select.addEventListener('change',()=>{w.summaryRows=settings.summaryRows=Number(select.value);w.limit=w.summaryRows;w.page=0;saveSettings();wm.save();renderReader(w);});pref.append(select);f.append(playerSpeedSummary(v,s),pref,el('small',t('raw_display_count',{raw:new Set(items.flatMap(i=>i.batch?i.batch.map(c=>c.event.guid):[i.event.guid])).size,display:items.length})));
+    for(const item of items.slice(0,w.limit)){const key=item.flip?.id||item.event.guid,contentKey=JSON.stringify([key,item.batch?.map(i=>[i.event.guid,i.event.identity]),item.event.identity,i18n.locale(),settings.speed,resolvedEvidence().byGuid.get(item.event.guid),v.detailSegmentsByGuid.get(item.event.guid),s?.byGuid.get(item.event.guid)]);let row=oldRows.get(key);if(!row||row._contentKey!==contentKey){row=item.flip?flipArticle(item,v,s,w.expanded):playerEventArticle(item.event,v,s,w.expanded);row.dataset.rowKey=key;row.dataset.presentationRow='1';row._contentKey=contentKey;}f.append(row);}
+    if(items.length>w.limit)f.append(button(t('more_records'),()=>{w.limit+=settings.pageSize;renderReader(w);wm.save();}));if(!items.length)f.append(el('p',t('no_data_yet')));w.body.replaceChildren(f);if(active?.isConnected&&w.body.contains(active))active.focus({preventScroll:true});w.activitySignature=signature;updateOrdinaryInferenceStatus(w);updateEventTimes(w.body);
+    if(!w._restoredReading&&w.readingAnchor&&[...w.body.querySelectorAll('[data-presentation-row]')].some(r=>r.dataset.event===w.readingAnchor.id)){restoreAnchor(w.body,w.readingAnchor,'[data-presentation-row]');w._restoredReading=true;}else restoreAnchor(w.body,anchor,'[data-presentation-row]');
+  }
+  function updateOrdinaryInferenceStatus(w){if(w.viewSection==='inference')return;let n=w.body.querySelector('[data-ordinary-inference]');if(!n){n=el('details');n.dataset.ordinaryInference='1';const summary=el('summary'),content=el('p');summary.dataset.ordinaryInferenceSummary='1';content.dataset.ordinaryInferenceDetails='1';n.append(summary,content);w.body.prepend(n);}const base=inferenceCache.get(w.player)?.result,r=historicalModel.select(base?.historical,primaryModel(),settings.historicalScenario,w.historicalBranch??null),text=t(primaryModel()==='minimum-movement'?'minimum_movement_choice':'local_average_choice')+' / '+t(settings.historicalScenario==='XMP'?'xmp_assumption':'interaction_baseline')+' · '+t(i18n.catalog['route_'+r.state]?'route_'+r.state:'route_unavailable')+(r.reason&&i18n.catalog['historical_reason_'+r.reason]?' · '+t('historical_reason_'+r.reason):'')+' · '+t('backtrack_legend')+(r.wholeProof?.approximation?' · '+t('backtrack_approximation'):'');const summary=n.querySelector('summary'),inactive=!derivedEnabled()&&!(settings.paths&&settings.historicalScenario==='XMP'),short=inactive?t('historical_inference_off'):t(primaryModel()==='minimum-movement'?'minimum_movement_choice':'local_average_choice')+' / '+t(settings.historicalScenario==='XMP'?'xmp_assumption':'interaction_baseline')+' · '+t(i18n.catalog['route_'+r.state]?'route_'+r.state:'route_unavailable');if(summary.textContent!==short)summary.textContent=short;const detail=n.querySelector('p');if(detail.textContent!==text)detail.textContent=text;}
+  function renderReader(w){renderUnifiedActivity(w);}
+  function renderDetail(w){renderUnifiedActivity(w);}
 
   const inferenceCache=new Map(),inferencePending=new Map(),inferenceQueue=new Map();let inferenceWorker=null,inferenceLayer,masterLayer,observationT=Date.now(),jobId=0,discarded=0,activeJob=null,workerEpoch=0;
   const inferenceModel=createPositionInference(parseTrackerLink,parseTrackerInteraction),historicalModel=createTrackerHistory(inferenceModel);
@@ -4651,11 +5624,11 @@ function createTrackerCore() {
   function primaryModel(){return settings.inferenceReference==='both'?settings.historicalPrimary:settings.inferenceReference;}
   const sharedView=(name,hours=settings.hours)=>model.view(name,hours,observationT);
   function baselineKey(v){return JSON.stringify([inferenceModel.VERSION,settings.hours,observationT-(v.events.at(-1)?.time||observationT)>=inferenceModel.PARAMETERS.inactivityMs,v.events.map(e=>[e.guid,e.identity,e.raw?1:0])]);}
-  function relevantSourceConflicts(v){const ids=new Set(v.events.map(e=>e.guid));return [...model.conflicts.values()].filter(c=>ids.has(c.guid)&&c.original.time<=observationT&&c.incoming.time<=observationT).map(c=>({id:c.id,guid:c.guid}));}
-  function inferenceKey(v){return baselineKey(v)+'|'+JSON.stringify([settings.xmpRadius,historicalTime(v.name),observationRevision,dataGeneration,relevantSourceConflicts(v)]);}
+  function relevantSourceConflicts(v){const ids=new Set(v.events.map(e=>e.guid).concat(resolvedEvidence().forPlayer(v.name).flatMap(e=>(e.analysisConstraint?.rawIds||[]).concat(e.attackAssociation?.sourceGuids||[]))));return [...model.conflicts.values()].filter(c=>ids.has(c.guid)&&c.original.time<=observationT&&c.incoming.time<=observationT).map(c=>({id:c.id,guid:c.guid}));}
+  function inferenceKey(v){return baselineKey(v)+'|'+JSON.stringify([settings.xmpRadius,historicalTime(v.name),observationRevision,dataGeneration,relevantSourceConflicts(v),resolvedEvidence().forPlayer(v.name).map(e=>[e.guid,e.analysisConstraint,e.attackAssociation])]);}
   function startInferenceWorker(){
     const epoch=++workerEpoch;
-    try{const code='const createTrackerHistory='+createTrackerHistory.toString()+';const createTrackerRegion='+createTrackerRegion.toString()+';const createTrackerMinimum='+createTrackerMinimum.toString()+';const parseTrackerSystem='+parseTrackerSystem.toString()+';const model=('+createPositionInference.toString()+')(('+parseTrackerLink.toString()+'),('+parseTrackerInteraction.toString()+'));onmessage=e=>{const {id,name,key,events,options}=e.data;let result;try{const minimum=model.inferMinimum(events,{...options,_cache:options._minimumCache||[],budgetMs:1200,sliceWindows:2}),minimumScenario=model.inferMinimum(events,{...options,_cache:options._minimumXmpCache||[],budgetMs:1200,sliceWindows:2},true);result={...minimum,minimum,minimumScenario,scenario:minimumScenario,historical:createTrackerHistory(model).evaluate(events,options,minimum,minimumScenario)};}catch(error){result={status:"unknown",reason:"worker-error",calculation:{state:"unavailable"},historical:{variants:[],unavailable:["minimum-movement","local-average"].flatMap(model=>["interaction","XMP"].map(scenario=>({model,scenario,state:"unavailable",reason:"worker-error"}))),limits:[],calculation:{state:"unavailable"}}};}const done=!(result.minimum?.progress?.pending||result.minimumScenario?.progress?.pending||result.historical?.progress?.pending);postMessage({id,name,key,result,done});};';
+    try{const code='const createTrackerEvidence='+createTrackerEvidence.toString()+';const createTrackerHistory='+createTrackerHistory.toString()+';const createTrackerRegion='+createTrackerRegion.toString()+';const createTrackerMinimum='+createTrackerMinimum.toString()+';const parseTrackerSystem='+parseTrackerSystem.toString()+';const model=('+createPositionInference.toString()+')(('+parseTrackerLink.toString()+'),('+parseTrackerInteraction.toString()+'));onmessage=e=>{const {id,name,key,events,options}=e.data;let result;try{const minimum=model.inferMinimum(events,{...options,_cache:options._minimumCache||[],budgetMs:1200,sliceWindows:2}),minimumScenario=model.inferMinimum(events,{...options,_cache:options._minimumXmpCache||[],budgetMs:1200,sliceWindows:2},true);result={...minimum,minimum,minimumScenario,scenario:minimumScenario,historical:createTrackerHistory(model).evaluate(events,options,minimum,minimumScenario)};}catch(error){result={status:"unknown",reason:"worker-error",calculation:{state:"unavailable"},historical:{variants:[],unavailable:["minimum-movement","local-average"].flatMap(model=>["interaction","XMP"].map(scenario=>({model,scenario,state:"unavailable",reason:"worker-error"}))),limits:[],calculation:{state:"unavailable"}}};}const done=!(result.minimum?.progress?.pending||result.minimumScenario?.progress?.pending||result.historical?.progress?.pending);postMessage({id,name,key,result,done});};';
       const url=URL.createObjectURL(new Blob([code],{type:'application/javascript'}));inferenceWorker=new Worker(url);URL.revokeObjectURL(url);
       inferenceWorker.onmessage=e=>{
         if(epoch!==workerEpoch){discarded++;return;}const {name,key,result,id,done}=e.data;const job=activeJob;if(job?.id===id)activeJob=null;
@@ -4680,7 +5653,7 @@ function createTrackerCore() {
     const cachedComplete=!cached?.result.progress?.pending&&!cached?.result.scenario?.progress?.pending&&!cached?.result.minimum?.progress?.pending&&!cached?.result.minimumScenario?.progress?.pending&&!cached?.result.historical?.progress?.pending;
     if(cached?.key===key&&(cachedComplete||inferencePending.get(v.name)?.key===key||!inferenceWorker))return cached.result;
     if(inferencePending.get(v.name)?.key!==key){
-      cancelInference(v.name);const events=v.events.map(e=>({...e,role:core.role(e)})),options={T:observationT,player:v.name,hours:settings.hours,xmp:true,minimum:true,historicalTime:historicalTime(v.name),sourceConflicts:relevantSourceConflicts(v),dataGeneration,xmpRadius:settings.xmpRadius,_cache:cached?.result.cacheEntries||[],_xmpCache:cached?.result.scenario?.cacheEntries||[],_minimumCache:cached?.result.minimum?.cacheEntries||[],_minimumXmpCache:cached?.result.minimumScenario?.cacheEntries||[],_referenceCache:cached?.result.historical?.cacheEntries||[]};
+      cancelInference(v.name);const events=resolvedEvidence().forPlayer(v.name).filter(e=>v.events.some(row=>row.guid===e.guid)).map(e=>({...e,role:core.role(e)})),options={T:observationT,player:v.name,hours:settings.hours,xmp:true,minimum:true,historicalTime:historicalTime(v.name),sourceConflicts:relevantSourceConflicts(v),dataGeneration,xmpRadius:settings.xmpRadius,_cache:cached?.result.cacheEntries||[],_xmpCache:cached?.result.scenario?.cacheEntries||[],_minimumCache:cached?.result.minimum?.cacheEntries||[],_minimumXmpCache:cached?.result.minimumScenario?.cacheEntries||[],_referenceCache:cached?.result.historical?.cacheEntries||[]};
       // Revalidate exact window identities against the new input before displaying
       // retained histories while replacement work is pending.
       const preview={status:'pending',progress:{pending:1},calculation:{state:'partial'},latest:{state:'pending',point:null},historical:null};
@@ -4693,22 +5666,23 @@ function createTrackerCore() {
   // screen hit test; this is click routing, never an inferred actor anchor.
   function forwardEvidencePortalClick(ev){if(!ev.originalEvent)return;const p=window.map.mouseEventToLayerPoint(ev.originalEvent),hits=Object.values(window.portals||{}).filter(m=>window.map.hasLayer(m)&&typeof m._containsPoint==='function'&&m._containsPoint(p));if(hits.length!==1)return;const display=window.IITC?.portal?.display,render=display?.renderDetails||window.renderPortalDetails,guid=hits[0].options.guid||hits[0].options.data?.guid;if(guid&&typeof render==='function'){L.DomEvent.stop(ev.originalEvent);render.call(display,guid);return true;}return false;}
   function drawInferences(){
-    clearInferenceGraphics();if(!derivedEnabled()||mapScope.kind!=='player'||!window.map.hasLayer(masterLayer)||window.map.getZoom()<MIN_ZOOM)return;const name=canonical(mapScope.player),w=wm.get('player:'+name.toLowerCase());if(w?.viewSection!=='inference'||w.node.hidden)return;
-    const v=sharedView(name);if(!matches(name,v)||!window.map.hasLayer(layers[v.role]))return;const base=inferenceFor(v),result=historicalModel.select(base?.historical,primaryModel(),settings.historicalScenario,w.historicalBranch??null);if(result.state!=='useful')return;
+    clearInferenceGraphics();if(!(derivedEnabled()||settings.paths&&settings.historicalScenario==='XMP')||mapScope.kind!=='player'||!window.map.hasLayer(masterLayer)||window.map.getZoom()<MIN_ZOOM)return;const name=canonical(mapScope.player),w=wm.get('player:'+name.toLowerCase());if(!w||w.node.hidden)return;
+    const v=sharedView(name);if(!matches(name,v)||!window.map.hasLayer(layers[v.role]))return;const base=inferenceFor(v),result=historicalModel.select(base?.historical,primaryModel(),settings.historicalScenario,w.historicalBranch??null);if(!['useful','coarse'].includes(result.state))return;
     const identity=result.key;
-    if(settings.historicalRegions)for(const c of result.components)L.polygon(c.polygon,{pane:panes.regions,color:roleColors[v.role],fillColor:roleColors[v.role],fillOpacity:.1,weight:1.2,opacity:.7,interactive:false,ptcgRegionTime:result.time,ptcgPlayer:name,ptcgResultIdentity:identity,ptcgComponent:c.id,ptcgScenario:result.scenario}).addTo(inferenceLayer);
+    if(settings.paths&&result.scenario==='XMP'&&result.route.length>=2)motionLine(result.route.map(p=>p.position),v.role,'raw',inferenceLayer,{ptcgPlayer:name,ptcgAttackSupported:true,ptcgConditional:true,ptcgResultIdentity:identity,ptcgScenario:result.scenario,ptcgRoute:result.route,title:'Conditional attack-supported simulation / 攻擊支持條件軌跡'});
+    if(settings.historicalRegions&&result.state==='useful')for(const c of result.components)L.polygon(c.polygon,{pane:panes.regions,color:roleColors[v.role],fillColor:roleColors[v.role],fillOpacity:.1,weight:1.2,opacity:.7,interactive:false,ptcgRegionTime:result.time,ptcgPlayer:name,ptcgResultIdentity:identity,ptcgComponent:c.id,ptcgScenario:result.scenario}).addTo(inferenceLayer);
     if(settings.historicalPaths&&result.route.length>=2)motionLine(result.route.map(p=>p.position),v.role,'inferred',inferenceLayer,{ptcgPlayer:name,ptcgPointTimes:result.route.map(p=>p.time),ptcgScenario:result.scenario,ptcgResultIdentity:identity,ptcgWitness:true,ptcgWitnessDistanceM:result.distanceM,ptcgRoute:result.route,ptcgInterpolation:'uniform straight simulated edges'});
     if(settings.historicalPositions){const text=[settings.names?name:'',settings.labelTime?clockText.absolute(result.time):''].filter(Boolean).join(' · '),html=artwork.pin([v.role],1,true)+(text?'<span class="ptcg-label ptcg-region-label" style="color:'+roleColors[v.role]+'">'+escape(text)+'</span>':'');const marker=L.marker(result.position,{pane:panes.inferred,icon:L.divIcon({className:'ptcg-possible-pin',html,iconSize:artwork.inferredSize,iconAnchor:artwork.inferredAnchor}),title:name+' · '+t('simulation_point_help'),ptcgInferenceName:name,ptcgPlayer:name,ptcgInferenceTime:result.time,ptcgResultIdentity:identity,ptcgScenario:result.scenario,ptcgBranch:result.branch,ptcgWitness:true,ptcgSupport:result.model});bindHover(marker,result.rawIds.map(id=>({event:model.events.get(id)})).filter(x=>x.event),t('simulation_point_help'));marker.on('click',()=>{api.inspectHistory(name,result.time);});marker.addTo(inferenceLayer);}
   }
   function drawEvents(){
     // Event-object lines are independent of Portal marker ownership/hover lifetime.
     for(const l of eventGeometry)eventLayer.removeLayer(l);eventGeometry.clear();const icons=new Map();
-    if(settings.events&&window.map.hasLayer(masterLayer)&&window.map.getZoom()>=MIN_ZOOM){
+    if((settings.events||settings.destroyedLinks)&&window.map.hasLayer(masterLayer)&&window.map.getZoom()>=MIN_ZOOM){
     const addGeometry=l=>{eventGeometry.add(l);l.addTo(eventLayer);};
     for(const name of model.players.keys()){const v=sharedView(name);if(!matches(name,v)||!window.map.hasLayer(layers[v.role]))continue;for(const e of v.events){const a=eventAppearance(e),link=core.parseLink(e);
-      if(link){const points=link.endpoints.map(p=>p.position);addGeometry(L.polyline(points,{pane:panes.eventLines,color:'#102132',weight:5,interactive:false,ptcgHalo:true}));addGeometry(L.polyline(points,{pane:panes.eventLines,color:a.color,weight:2.5,interactive:false,ptcgLinkEvent:e.guid,ptcgPlayer:name}));
-        if(link.directed){const p=points[0],q=points[1],x=window.map.latLngToContainerPoint(p),y=window.map.latLngToContainerPoint(q),angle=Math.atan2(y.y-x.y,y.x-x.x)*180/Math.PI,mid=window.map.containerPointToLatLng([(x.x+y.x)/2,(x.y+y.y)/2]);addGeometry(L.marker(mid,{pane:panes.eventLines,interactive:false,ptcgLinkArrow:e.guid,ptcgPlayer:name,icon:L.divIcon({className:'ptcg-link-arrow',html:'<span style="color:'+a.color+';transform:rotate('+angle+'deg)">➤</span>',iconSize:[18,18]})}));}}
-      for(const p of e.portals){if(!p.position)continue;const key=portalKey(p);if(!icons.has(key))icons.set(key,new Map());icons.get(key).set(e.guid,{event:e,portal:p});}
+      if(link&&(link.destroyed?settings.destroyedLinks:settings.events)){const points=link.endpoints.map(p=>p.position),lineColor=link.destroyed?roleColors[presentation.faction(e)]:a.color,fade=eventAge(e.time);addGeometry(L.polyline(points,{pane:panes.eventLines,color:'#102132',weight:5,opacity:fade,interactive:false,ptcgHalo:true,ptcgDestroyedLink:!!link.destroyed,ptcgSourceTime:e.time,ptcgBaseOpacity:1}));addGeometry(L.polyline(points,{pane:panes.eventLines,color:lineColor,opacity:fade,ptcgSourceTime:e.time,ptcgBaseOpacity:1,weight:2.5,dashArray:link.destroyed?'4,5':null,interactive:false,ptcgDestroyedLink:!!link.destroyed,ptcgLinkEvent:e.guid,ptcgPlayer:name}));
+        if(link.directed){const p=points[0],q=points[1],x=window.map.latLngToContainerPoint(p),y=window.map.latLngToContainerPoint(q),angle=Math.atan2(y.y-x.y,y.x-x.x)*180/Math.PI,mid=window.map.containerPointToLatLng([(x.x+y.x)/2,(x.y+y.y)/2]);addGeometry(L.marker(mid,{pane:panes.eventLines,interactive:false,opacity:fade,ptcgSourceTime:e.time,ptcgBaseOpacity:1,ptcgLinkArrow:e.guid,ptcgPlayer:name,icon:L.divIcon({className:'ptcg-link-arrow',html:'<span style="color:'+lineColor+';transform:rotate('+angle+'deg)">➤</span>',iconSize:[18,18]})}));}}
+      if(!settings.events)continue;const association=resolvedEvidence().byGuid.get(e.guid)?.attack;const displayPortals=e.action==='destroyedLink'?(association?.state==='supported'?[association.portal]:[]):e.action==='linked'&&link?.directed?[link.origin]:e.portals;for(const p of displayPortals){if(!p.position)continue;const key=portalKey(p);if(!icons.has(key))icons.set(key,new Map());icons.get(key).set(e.guid,{event:e,portal:p});}
     }}
     }
     for(const [key,entries] of icons){const items=[...entries.values()];
@@ -4716,18 +5690,18 @@ function createTrackerCore() {
       let entry=eventMarkers.get(key);if(!entry){const marker=L.marker(p.position,{pane:panes.events,icon:L.divIcon({className:'ptcg-event-icon',html,iconSize:[22,22],iconAnchor:[11,11]})});entry={marker,items,portal:p,html};eventMarkers.set(key,entry);marker.bindTooltip(()=>eventTooltip(entry.items,t("portal_activity")),{pane:panes.tooltip,className:'ptcg-hover',direction:'top',offset:[0,-12],interactive:false,opacity:1});marker.on('click',ev=>{if(ev.originalEvent)L.DomEvent.stopPropagation(ev.originalEvent);openPortalActivity(entry.portal);nativePortal(entry.portal);});marker.addTo(eventLayer);}
       const marker=entry.marker;entry.items=items;entry.portal=p;
       if(marker.getLatLng().lat!==p.position[0]||marker.getLatLng().lng!==p.position[1])marker.setLatLng(p.position);
-      Object.assign(marker.options,{title:names.length+t("players_200")+items.length+t("activity_events_241")+(p.name||p.plain),ptcgPortalKey:key,ptcgEventId:e.guid,ptcgPortalPosition:p.position,ptcgContributions:items.map(i=>({guid:i.event.guid,player:i.event.player,time:i.event.time,action:i.event.action}))});
+      marker.setOpacity(eventAge(e.time));Object.assign(marker.options,{ptcgSourceTime:e.time,ptcgBaseOpacity:1,title:names.length+t("players_200")+items.length+t("activity_events_241")+(p.name||p.plain),ptcgPortalKey:key,ptcgEventId:e.guid,ptcgPortalPosition:p.position,ptcgContributions:items.map(i=>({guid:i.event.guid,player:i.event.player,time:i.event.time,action:i.event.action}))});
       if(marker._icon){if(entry.html!==html)marker._icon.innerHTML=html;entry.html=html;marker._icon.classList.toggle('ptcg-capture',!!a.accent);marker._icon.style.borderColor=a.color;marker._icon.title=marker.options.title;}
       marker.setTooltipContent(()=>eventTooltip(entry.items,t("portal_activity")));
     }
     for(const [key,entry] of eventMarkers)if(!icons.has(key)){closeOwnedTooltip(entry.marker);entry.marker.unbindTooltip();entry.marker.off();eventLayer.removeLayer(entry.marker);eventMarkers.delete(key);}
     updatePortalActivity();
   }
-  function focusEvent(e){const p=e.portals.find(p=>p.position);if(!p)return;nativePortal(p);for(const marker of eventLayer.getLayers())if((marker.options.ptcgEventId===e.guid||marker.options.ptcgContributions?.some(c=>c.guid===e.guid))&&marker._icon){marker._icon.classList.add('ptcg-event-focus');setTimeout(()=>marker._icon?.classList.remove('ptcg-event-focus'),3000);}}
   let eventLayer,evidenceRenderer;
   const eventMarkers=new Map(),eventGeometry=new Set();let pinnedPortal=null;
-  // COMM PORTAL markup often lacks a GUID. Exact source coordinates are the fallback,
-  // without merging nearby Portals or inventing a geographic identity.
+  let focusedLink=null,eventFocusTimer=null,focusedIcons=[];
+  function clearEventFocus(){clearTimeout(eventFocusTimer);eventFocusTimer=null;if(focusedLink){masterLayer.removeLayer(focusedLink);focusedLink=null;}for(const icon of focusedIcons)icon.classList.remove('ptcg-event-focus');focusedIcons=[];}
+  function focusEvent(e){clearEventFocus();const p=e.portals.find(p=>p.position);if(p)nativePortal(p);if(!window.map.hasLayer(masterLayer)){messages.refreshText=()=>t('focus_master_off');return false;}const link=core.parseLink(e);if(['linked','destroyedLink'].includes(e.action)&&!link){messages.refreshText=()=>t('focus_geometry_unknown');requestRender();}if(link){focusedLink=L.layerGroup();for(const [color,weight]of [['#000000',9],['#ffffff',5],['#ff7700',2]])L.polyline(link.endpoints.map(p=>p.position),{pane:panes.eventLines,color,weight,opacity:1,interactive:false,ptcgFocusEvent:e.guid,ptcgFocusLink:true}).addTo(focusedLink);focusedLink.addTo(masterLayer);}for(const marker of eventLayer.getLayers())if((marker.options.ptcgEventId===e.guid||marker.options.ptcgContributions?.some(c=>c.guid===e.guid))&&marker._icon){marker._icon.classList.add('ptcg-event-focus');focusedIcons.push(marker._icon);}eventFocusTimer=setTimeout(clearEventFocus,3000);return !!link||!!p;}
   function portalKey(p){return p.guid||p.portalGuid||'coordinate:'+p.position?.join(',');}
   function clearEventGraphics(){for(const entry of eventMarkers.values()){closeOwnedTooltip(entry.marker);entry.marker.unbindTooltip();entry.marker.off();}eventMarkers.clear();eventGeometry.clear();eventLayer.clearLayers();}
   function closePortalActivity(){const w=wm?.get('portal-activity');if(w)wm.hide(w);pinnedPortal=null;}
@@ -4735,22 +5709,30 @@ function createTrackerCore() {
   function centerPortalActivity(){const p=pinnedPortal?.portal;if(!validPortalPosition(p))return;pauseFollow();window.map.panTo(p.position,{animate:false});}
   function openPortalActivity(p){if(!p||!window.map.hasLayer(masterLayer))return;const key=portalKey(p);
     const w=wm.open('portal-activity',t("portal_activity"),w=>{w.kind='portal';w.body.classList.add('ptcg-portal-activity');
-      const title=el('h3'),stats=el('p'),center=button(t("center_on_screen"),centerPortalActivity),rows=el('div',undefined,'ptcg-portal-rows'),more=button(t("more"),()=>{if(pinnedPortal){pinnedPortal.allowance+=5;updatePortalActivity();}}),end=el('small',t("all_shown"));
+      const title=el('h3'),stats=el('p'),center=button(t("center_on_screen"),centerPortalActivity),rows=el('div',undefined,'ptcg-portal-rows'),more=button(t('more_portal_events'),()=>{if(pinnedPortal){pinnedPortal.allowance+=5;updatePortalActivity();}}),end=el('small',t("all_shown"));
       center.title=t("center_on_screen");center.dataset.portalCenter='1';more.dataset.portalMore='1';rows.tabIndex=0;rows.setAttribute('aria-label',t("portal_activity_records"));w.body.append(title,stats,center,rows,more,end);w.portalUI={title,stats,center,rows,more,end};w.onHide=()=>{pinnedPortal=null;};
     },420,460,{owner:'portal',title:t("portal_activity"),standalone:true,initialHidden:true});
     if(pinnedPortal?.key===key){pinnedPortal.portal=p;updatePortalActivity();return;}
     w.portalUI.rows.replaceChildren();w.portalUI.rows.scrollTop=0;w.body.scrollTop=0;pinnedPortal={key,portal:p,node:w.node,w,...w.portalUI,allowance:5,rowNodes:new Map()};updatePortalActivity();
   }
-  function portalBatches(items){const out=[],groups=new Map();for(const item of items){const e=item.event;if(core.isSystem(e)&&['destroyedLink','destroyedField','destroyedResonator','neutralized'].includes(e.action)){const key=e.player.toLowerCase()+'|'+e.time;let group=groups.get(key);if(!group){group={...item,batch:[]};groups.set(key,group);out.push(group);}group.batch.push(item);}else out.push(item);}return out;}
-  function updatePortalActivity(){const pin=pinnedPortal;if(!pin)return;const items=new Map();if(settings.events)for(const name of model.players.keys()){const v=sharedView(name);if(!matches(name,v)||!window.map.hasLayer(layers[v.role]))continue;for(const e of v.events){const p=e.portals.find(p=>p.position&&portalKey(p)===pin.key);if(p)items.set(e.guid,{event:e,portal:p});}}
-    const all=[...items.values()].sort((a,b)=>b.event.time-a.event.time||a.event.guid.localeCompare(b.event.guid)),batches=portalBatches(all),visible=batches.slice(0,pin.allowance),scroll=pin.rows.scrollTop;if(all.length)pin.portal=all[0].portal;pin.title.textContent=pin.portal.name||pin.portal.plain||t("unnamed_portal");wm.setTitle(pin.w,t("portal_activity_246")+pin.title.textContent);pin.center.disabled=!validPortalPosition(pin.portal);pin.center.title=pin.center.disabled?t("coordinates_unavailable"):t("center_on_screen");pin.stats.textContent=new Set(all.filter(i=>!core.isSystem(i.event)).map(i=>i.event.player.toLowerCase())).size+t("players_200")+all.length+t("activity_events_201")+' · '+t('system_event_count',{n:all.filter(i=>core.isSystem(i.event)).length})+' · '+t('displayed_count',{n:batches.length})+(!all.length?t("no_activity_under_current_filters"):'')+(pin.center.disabled?t("coordinates_unavailable_249"):'');
-    const keep=new Set(visible.map(i=>i.event.guid));for(const [id,row] of pin.rowNodes)if(!keep.has(id)){row.remove();pin.rowNodes.delete(id);}let cursor=pin.rows.firstChild;
-    for(const {event:e,portal:p,batch} of visible){if(batch){let row=pin.rowNodes.get(e.guid);const signature=i18n.locale()+'|'+batch.map(i=>i.event.guid).join('|');if(!row||row._batchSignature!==signature){if(row===cursor)cursor=row.nextSibling;const wasOpen=!!row?.open;row?.remove();row=el('details',undefined,'ptcg-portal-row');row.dataset.portalEvent=e.guid;row._batchSignature=signature;row.open=wasOpen;row.append(el('summary',t('system_batch',{name:e.player,n:batch.length})+' · '+time(e.time)));for(const item of batch){const line=el('div');line.append(el('span',shortActions[item.event.action]+' · '+item.event.guid),button(t('details'),()=>openDetail(item.event.player)));row.append(line);}pin.rowNodes.set(e.guid,row);}if(row!==cursor)pin.rows.insertBefore(row,cursor);cursor=row.nextSibling;continue;}let row=pin.rowNodes.get(e.guid);if(!row){row=el('div',undefined,'ptcg-portal-row');row.dataset.portalEvent=e.guid;const actor=button(e.player,()=>openReader(row._event.player)),action=button(shortActions[e.action],()=>focusEvent(row._event)),stamp=el('span');row.append(actor,action,stamp);row._actor=actor;row._action=action;row._stamp=stamp;pin.rowNodes.set(e.guid,row);}row._event=e;row._actor.textContent=e.player;row._actor.style.color=roleColors[core.role(e)];const signature=e.action+'|'+e.wireTeam+'|'+core.role(e)+'|'+i18n.locale();if(row._signature!==signature){row._action.replaceChildren(eventSymbol(e),document.createTextNode(shortActions[e.action]));row._signature=signature;}row._stamp.textContent=time(e.time);row._stamp.title=time(e.time,true);if(row!==cursor)pin.rows.insertBefore(row,cursor);cursor=row.nextSibling;}
-    pin.rows.scrollTop=scroll;pin.more.disabled=visible.length>=batches.length;pin.end.hidden=!pin.more.disabled;
+  function portalBatches(items){return presentation.fold(items,flipResolution());}
+  function portalEventRow(item){const e=item.event,row=el('details',undefined,'ptcg-portal-row'),summary=el('summary');row.dataset.portalEvent=e.guid;row.dataset.rowKey=item.flip?.id||e.guid;
+    if(item.flip){summary.append(compactFlip(item));row.append(summary,el('p',t('raw_display_count',{raw:item.batch.length,display:1})),flipEvidenceDetails(item.flip));for(const child of item.batch){const detail=el('details'),s=el('summary');s.append(compactEvent(child.event));detail.append(s,eventDetails(child.event));row.append(detail);}}
+    else{summary.append(compactEvent(e,null,'portal'));row.append(summary);const relation=relationLabel(e,item.portal||pinnedPortal?.portal);if(relation)row.append(el('small',relation));row.append(eventDetails(e));}return row;
   }
+  function updatePortalActivity(){const pin=pinnedPortal;if(!pin)return;const items=new Map();for(const name of model.players.keys()){const v=sharedView(name);if(!matches(name,v)||!window.map.hasLayer(layers[v.role]))continue;for(const e of v.events){const p=e.portals.find(p=>p.position&&portalKey(p)===pin.key);if(p)items.set(e.guid,{event:e,portal:p});}}
+    for(const e of model.events.values())if(core.isSystem(e)&&e.time<=observationT&&e.time>=observationT-settings.hours*3600000){const p=e.portals.find(p=>p.position&&portalKey(p)===pin.key);if(p)items.set(e.guid,{event:e,portal:p});}
+    const all=[...items.values()].sort((a,b)=>b.event.time-a.event.time||a.event.guid.localeCompare(b.event.guid)),batches=portalBatches(all),visible=batches.slice(0,pin.allowance),anchor=readingAnchor(pin.rows,'[data-portal-event]');if(all.length)pin.portal=all[0].portal;pin.title.textContent=pin.portal.name||pin.portal.plain||t('unnamed_portal');wm.setTitle(pin.w,t('portal_activity_246')+pin.title.textContent);pin.center.disabled=!validPortalPosition(pin.portal);pin.center.title=pin.center.disabled?t('coordinates_unavailable'):t('center_on_screen');updatePortalHeader(pin,all,batches);
+    const keep=new Set(visible.map(i=>i.flip?.id||i.event.guid));for(const [id,row]of pin.rowNodes)if(!keep.has(id)){row.remove();pin.rowNodes.delete(id);}let cursor=pin.rows.firstChild;
+    for(const item of visible){const key=item.flip?.id||item.event.guid,signature=JSON.stringify([i18n.locale(),item.event.identity,item.batch?.map(x=>[x.event.guid,x.event.identity]),resolvedEvidence().byGuid.get(item.event.guid)]);let row=pin.rowNodes.get(key);if(!row||row._contentKey!==signature){const open=row?.open;if(row===cursor)cursor=row.nextSibling;row?.remove();row=portalEventRow(item);row.open=!!open;row._contentKey=signature;pin.rowNodes.set(key,row);}if(row!==cursor)pin.rows.insertBefore(row,cursor);cursor=row.nextSibling;}
+    updateEventTimes(pin.rows);restoreAnchor(pin.rows,anchor,'[data-portal-event]');pin.more.disabled=visible.length>=batches.length;pin.end.hidden=!pin.more.disabled;
+  }
+  function factionCountsNode(views){const c=presentation.counts(views),others=c.MACHINA+c.NIA+c.OTHER,n=el('span',c.total+(others?t('accounts'):t('players_205')));n.dataset.factionCounts=JSON.stringify(c);for(const role of ['RES','ENL']){const text=el('span',' · '+role+' '+c[role]);text.style.color=roleColors[role];n.append(text);}for(const [role,names]of [['MACHINA','Machina'],['NIA','NIA']])if(c[role])n.append(document.createTextNode(' · '+names+' '+c[role]));if(c.OTHER)n.append(document.createTextNode(' · '+t('other_count',{n:c.OTHER})));return n;}
+  function eventTooltip(items,heading=''){const node=el('div',undefined,'ptcg-hover-content');if(heading)node.append(el('strong',heading));const unique=new Map(items.filter(x=>!core.isSystem(x.event)).map(x=>[x.event.player.toLowerCase(),{name:x.event.player,role:core.role(x.event)}]));if(unique.size>1)node.append(factionCountsNode([...unique.values()]));const rows=portalBatches([...items].sort((a,b)=>b.event.time-a.event.time));for(const item of rows.slice(0,5)){const e=item.event,row=el('div',undefined,'ptcg-hover-row');if(item.flip){const stamp=el('span',time(e.time));stamp.dataset.eventTime=e.time;row.append(stamp,eventSymbol(e),el('strong',t('flip_summary')),el('span',item.flip.operator||item.flip.systemActor||e.player));for(const child of item.batch.filter(c=>['linked','destroyedLink'].includes(c.event.action)).slice(0,3))row.append(compactEvent(child.event,null,'portal',true));}else row.append(compactEvent(e,null,'portal',true));node.append(row);}if(rows.length>5)node.append(el('small',t('also')+(rows.length-5)+t('records_click_to_view')));return node;}
   function nativePortalSelected(data){const guid=data?.selectedPortalGuid||data?.guid||window.selectedPortal;if(!guid)return;let p;for(const e of model.events.values()){p=e.portals.find(p=>(p.guid||p.portalGuid)===guid);if(p)break;}if(!p){const m=window.portals?.[guid],ll=m&&(window.IITC?.portal?.getLatLng?window.IITC.portal.getLatLng(m):m.getLatLng?.());if(ll){const pos=[ll.lat,ll.lng];for(const e of model.events.values()){p=e.portals.find(p=>p.position?.join(',')===pos.join(','));if(p)break;}p=p||{guid,position:pos,name:m.options?.data?.title||'Portal'};}}if(p)openPortalActivity(p);}
+  api.eventEvidence=()=>({policy:eventEvidence.POLICY,flips:resolvedEvidence().flips});
   api.inferenceResult=name=>inferenceCache.get(canonical(name))?.result||null;
-  api.inferenceState=()=>({pending:inferencePending.size,discarded,T:observationT});
+  api.inferenceState=()=>({jobs:jobId,pending:inferencePending.size,discarded,T:observationT});
   // Read-only pipeline evidence for regression investigations, outside product UI.
   api.inferenceTrace=name=>{name=canonical(name);const v=sharedView(name),cache=inferenceCache.get(name),base=cache?.key===inferenceKey(v)?cache.result:inferencePending.get(name)?.preview||(!v.events.length?inferenceFor(v):null),w=wm.get('player:'+name.toLowerCase()),display=historicalModel.select(base?.historical,primaryModel(),settings.historicalScenario,w?.historicalBranch??null);return {name,T:observationT,displayTime:historicalTime(name),cutoff:observationT-settings.hours*3600000,worker:inferenceWorker?'available':'unavailable',pending:inferencePending.has(name),cacheCurrent:cache?.key===inferenceKey(v),display,comparison:base?.historical,minimumProofs:base?.minimum?.proofs||[],xmpAudit:base?.scenario?.audit,rawCount:v.events.length,legacyDiagnostic:{baseline:base?.audit,regions:base?.regions,paths:base?.pathSegments},rendered:{markers:inferenceLayer.getLayers().filter(l=>l.options.ptcgInferenceName===name).length,historicalMarkers:0,regions:inferenceLayer.getLayers().filter(l=>l.options.ptcgRegionTime!==undefined&&l.options.ptcgPlayer===name).length,paths:inferenceLayer.getLayers().filter(l=>l.options.ptcgInferredPath&&l.options.ptcgPlayer===name).length}};};
   api.inspectHistory=(name,at)=>{const w=playerWindow(name,'reader');w.viewSection='inference';if(Number.isSafeInteger(at))w.historicalTime=at;wm.save();requestRender(true);return w;};
@@ -4759,7 +5741,7 @@ function createTrackerCore() {
 
 
 
-  const eventTypes={neutralized:{glyph:'○',group:'destroy'},captured:{glyph:'⚑',accent:true,group:'capture'},deployed:{glyph:'⚑',group:'capture'},beacon:{glyph:'B',group:'beacon'},battleBeacon:{glyph:'B',group:'beacon'},rbb:{glyph:'B',glyphColor:'#da8dff',group:'beacon'},vrbb:{glyph:'B',glyphColor:'#ffe46c',group:'beacon'},fracker:{glyph:'F',glyphColor:'#ff6f6f',group:'fracker'},fireworks:{glyph:'✧',group:'other'},beaconWinner:{glyph:'•',group:'other'},beaconForecast:{glyph:'•',group:'other'},destroyedResonator:{glyph:'×',group:'destroy'},destroyedLink:{glyph:'×',group:'destroy'},destroyedField:{glyph:'×',group:'destroy'},linked:{glyph:'↗',group:'link'},fielded:{glyph:'△',group:'other'},upgraded:{glyph:'↑',group:'other'},unknown:{glyph:'•',group:'other'}};
+  const eventTypes={flip:{glyph:'⚑',group:'capture'},neutralized:{glyph:'○',group:'destroy'},captured:{glyph:'⚑',accent:true,group:'capture'},deployed:{glyph:'⚑',group:'capture'},beacon:{glyph:'B',group:'beacon'},battleBeacon:{glyph:'B',group:'beacon'},rbb:{glyph:'B',glyphColor:'#da8dff',group:'beacon'},vrbb:{glyph:'B',glyphColor:'#ffe46c',group:'beacon'},fracker:{glyph:'F',glyphColor:'#ff6f6f',group:'fracker'},fireworks:{glyph:'✧',group:'other'},beaconWinner:{glyph:'•',group:'other'},beaconForecast:{glyph:'•',group:'other'},destroyedResonator:{glyph:'×',group:'destroy'},destroyedLink:{glyph:'×',group:'destroy'},destroyedField:{glyph:'×',group:'destroy'},linked:{glyph:'↗',group:'link'},fielded:{glyph:'△',group:'other'},upgraded:{glyph:'↑',group:'other'},unknown:{glyph:'•',group:'other'}};
   let groups=['capture','destroy','link','beacon','fracker','other'],groupNames={capture:t("capture_resonator"),destroy:t("destruction"),link:t("link"),beacon:'Beacon／Battle Beacon',fracker:'Fracker',other:t("other_cf")};
   function eventAppearance(e){const type=eventTypes[e.action]||eventTypes.unknown;return {...type,color:['beacon','battleBeacon','rbb','vrbb','fracker'].includes(e.action)?({RESISTANCE:roleColors.RES,ENLIGHTENED:roleColors.ENL,MACHINA:roleColors.MACHINA}[e.wireTeam]||roleColors.OTHER):roleColors[core.role(e)],title:shortActions[e.action]};}
   function eventSymbol(e){const a=eventAppearance(e),n=el('span',a.glyph,'ptcg-row-symbol'+(a.accent?' ptcg-capture':''));n.style.color=a.glyphColor||a.color;n.style.borderColor=a.color;n.title=a.title;n.dataset.eventType=e.action;return n;}
@@ -4800,14 +5782,14 @@ function createTrackerCore() {
   function cancelHistoryAction(){if(historyTimer!==null)clearTimeout(historyTimer);historyTimer=null;historyIntent++;}
   function fetchHistory(force=false){
     if(!acquisition){messages.historyText=()=>t('history_interface_unavailable');requestRender();return Promise.resolve({state:'unavailable'});}
-    cancelHistoryAction();const token=historyIntent,epoch=dataGeneration,target=acquisitionTarget();if(liveObservation){target.upper=Date.now();target.lower=target.upper-settings.hours*3600000;}
+    cancelHistoryAction();const token=historyIntent,epoch=dataGeneration,target=acquisitionTarget();historyFreezeRight=null;const lease=historySession.acquire();target.upper=observationT;target.lower=target.upper-Math.min(24,settings.hours)*3600000;target.live=false;
     if(force){const rows=activityStore.invalidateHistory(target);enqueue([],[],rows);}
     messages.historyText=()=>t('history_queued');requestRender();
-    return acquisition.requestHistory(target,force).then(r=>{if(token!==historyIntent||epoch!==dataGeneration)return r;messages.historyText=()=>i18n.status(r.text)||t('history_'+r.state);requestRender(true);return r;});
+    return acquisition.requestHistory(target,force).then(r=>{if(token!==historyIntent||epoch!==dataGeneration)return r;messages.historyText=()=>i18n.status(r.text)||t('history_'+r.state);requestRender(true);return r;}).finally(()=>historySession.release(lease));
   }
-  function lookbackChanged(previous){cancelHistoryAction();acquisition?.cancelHistory();if(settings.hours>previous){messages.historyText=()=>t('history_queued');historyTimer=setTimeout(()=>{historyTimer=null;fetchHistory();},250);}}
-  function moreHistory(){const old=settings.hours;settings.hours+=1;saveSettings();lookbackChanged(old);requestRender(true);return true;}
-  function historyButton(f,w){const b=button(t('more'),moreHistory);b.dataset.moreHistory='1';f.append(b);const status=w.historyStatus||(w.historyStatus=createHistoryStatus(w.player));updateHistoryNode(status);f.append(status);}
+  function lookbackChanged(previous){settings.hours=Math.max(.5,Math.min(24,settings.hours));saveSettings();cancelHistoryAction();acquisition?.cancelHistory();if(settings.hours>previous){messages.historyText=()=>t('history_queued');historyTimer=setTimeout(()=>{historyTimer=null;fetchHistory();},250);}}
+  function moreHistory(){const old=settings.hours;if(old>=24){messages.historyText=()=>t('map_24h_limit');requestRender();return false;}settings.hours=Math.min(24,old+1);saveSettings();lookbackChanged(old);requestRender(true);return true;}
+  function historyButton(f,w){const b=button(t('lookback_more_global'),moreHistory);b.dataset.moreHistory='1';f.append(b);const status=w.historyStatus||(w.historyStatus=createHistoryStatus(w.player));updateHistoryNode(status);f.append(status);}
   api.expandHistory=moreHistory;api.retryHistory=()=>fetchHistory(true);api.historyState=()=>({...acquisition?.snapshot().history,busy:historyBusy,pages:historyPages,text:String(messages.historyText),visible:visibleHistoryCount()});
   function visibleHistoryCount(player){return [...model.players.keys()].reduce((n,p)=>{if(player&&p.toLowerCase()!==player.toLowerCase())return n;const v=sharedView(p);return n+(matches(p,v)&&window.map.hasLayer(masterLayer)&&window.map.hasLayer(layers[v.role])?v.events.length:0);},0);}
   let historyPresentationAt=0,historyPresentationKey='',historyPresentation=null;
@@ -4823,7 +5805,7 @@ function createTrackerCore() {
   function switchWindow(name,kind){const w=wm.get('player:'+name.toLowerCase());if(!w)return playerWindow(name,kind,true);w.scroll[w.kind]=w.body.scrollTop;w.kind=kind;w.node.dataset.kind=kind;w.body.replaceChildren();render();w.body.scrollTop=w.scroll[kind]||0;wm.save();return w;}
   function buildXMP(w){const label=el('label',t('attack_range_simulation'),'ptcg-field'),input=el('input');input.type='number';input.min=1;input.max=2000;input.value=settings.xmpRadius;input.dataset.xmpRadius='1';input.title=t('attack_range_help');input.addEventListener('change',()=>{if(localizing)return;const v=Number(input.value);if(!(v>0&&v<=2000)){input.value=settings.xmpRadius;return;}settings.xmpRadius=v;saveSettings();requestRender(true);});label.append(input,el('span','m'));w.body.append(label,el('small',t('attack_range_help')));
   }
-  function motionLine(points,role,kind,group,options={}){const c=options.ptcgPlayer?color(options.ptcgPlayer,sharedView(options.ptcgPlayer).team):roleColors[role],dash=kind==='raw'?'7,6':'3,5',pane=kind==='raw'?panes.raw:panes.inferredPaths;L.polyline(points,{pane,color:'#0c1c29',weight:kind==='raw'?6:3.5,opacity:.85,dashArray:dash,interactive:false,...options,ptcgHalo:true}).addTo(group);L.polyline(points,{pane,color:c,weight:kind==='raw'?4:1.5,dashArray:dash,interactive:false,...options,ptcgRawActivity:kind==='raw',ptcgInferredPath:kind==='inferred'}).addTo(group);}
+  function motionLine(points,role,kind,group,options={}){const c=options.ptcgPlayer?color(options.ptcgPlayer,sharedView(options.ptcgPlayer).team):roleColors[role],dash=options.ptcgAttackSupported?'10,3,2,3':kind==='raw'?'7,6':'3,5',pane=kind==='raw'?panes.raw:panes.inferredPaths;L.polyline(points,{pane,color:'#000000',weight:kind==='raw'?6:3.5,opacity:.85,dashArray:dash,interactive:false,...options,ptcgHalo:true}).addTo(group);L.polyline(points,{pane,color:c,weight:kind==='raw'?4:1.5,dashArray:dash,interactive:false,...options,ptcgRawActivity:kind==='raw'&&!options.ptcgAttackSupported,ptcgInferredPath:kind==='inferred'}).addTo(group);}
 
   function portalLink(portal) {
     const span = el('span', undefined, 'ptcg-portal');
@@ -4839,20 +5821,20 @@ function createTrackerCore() {
     span.append(a); return span;
   }
   function clearWithConfirmation(){if(!window.confirm(t("clear_activity_conflicts_and_scope_records_across_all_tabs_unexpo")))return Promise.resolve(false);return clearData();}
-  function resetActivity(change){const removed=change?.kind==='prune'?new Set(change.ids):null,keep=removed?[...model.events.values()].filter(e=>!removed.has(e.guid)):[],keepConflicts=removed?[...model.conflicts.values()].filter(c=>!removed.has(c.guid)):[];buffer=[];model.clear();for(const e of keep)model.add(e);for(const c of keepConflicts)model.conflicts.set(c.id,c);speedCache.clear();cancelHistoryAction();if(!removed)stopFollow('cleared');if(removed){for(const id of removed)persisted.delete(id);for(const id of [...savedConflicts])if(!model.conflicts.has(id))savedConflicts.delete(id);}else{persisted.clear();savedConflicts.clear();}Object.values(layers).forEach(layer=>layer.clearLayers());drawn.clear();clearClusterGraphics();clusterRecords.clear();clearEventGraphics();closePortalActivity();clearInferenceGraphics();inferenceCache.clear();inferencePending.clear();inferenceQueue.clear();activeJob=null;workerEpoch++;inferenceWorker?.terminate();inferenceWorker=null;startInferenceWorker();acquisition.resetActivity();activityStore.resetScopes(change);dirty=new Set(model.players.keys());}
+  function resetActivity(change){clearEventFocus();capture?.cancel('cleared');historySession?.reset();const removed=change?.kind==='prune'?new Set(change.ids):null,keep=removed?[...model.events.values()].filter(e=>!removed.has(e.guid)):[],keepConflicts=removed?[...model.conflicts.values()].filter(c=>!removed.has(c.guid)):[];buffer=[];backtrack?.clear();model.clear();for(const e of keep)model.add(e);for(const c of keepConflicts)model.conflicts.set(c.id,c);speedCache.clear();cancelHistoryAction();if(!removed)stopFollow('cleared');if(removed){for(const id of removed)persisted.delete(id);for(const id of [...savedConflicts])if(!model.conflicts.has(id))savedConflicts.delete(id);}else{persisted.clear();savedConflicts.clear();}Object.values(layers).forEach(layer=>layer.clearLayers());drawn.clear();clearClusterGraphics();clusterRecords.clear();clearEventGraphics();closePortalActivity();clearInferenceGraphics();inferenceCache.clear();inferencePending.clear();inferenceQueue.clear();activeJob=null;workerEpoch++;inferenceWorker?.terminate();inferenceWorker=null;startInferenceWorker();acquisition.resetActivity();activityStore.resetScopes(change);if(!removed){backtrackSaveError='';backtrackArchiveChain=backtrackArchiveChain.then(async()=>{const db=await archiveDB();await new Promise((resolve,reject)=>{const tx=db.transaction('pages','readwrite');tx.objectStore('pages').clear();tx.oncomplete=()=>{backtrackArchiveBytes=0;resolve();};tx.onerror=()=>reject(tx.error);});}).catch(e=>{backtrackSaveError=e.message;});}dirty=new Set(model.players.keys());}
   async function adoptEpoch(g,change){if(g<=dataGeneration)return;coordinator.stop();dataGeneration=g;activityStore.adopt(g,change);resetActivity(change);localStorage.removeItem(KEY+'-acquisition-scopes');messages.storageState=()=>change?.kind==='prune'?t("activity_pruning_synchronized"):t("other_tab_s_clear_synchronized");requestRender(true);updateAcquisitionPause();if(settings.persist)enqueue([...model.events.values()].filter(e=>!persisted.has(e.guid)),[...model.conflicts.values()].filter(c=>!savedConflicts.has(c.id)),activityStore.allScopes());}
-  async function clearData(ids=null){if(clearing)return false;clearing=true;acquisition.setPause(t("clearing_activity"));coordinator.stop();acquisition.resetActivity();buffer=[];workerEpoch++;inferenceWorker?.terminate();inferenceWorker=null;activeJob=null;const operation=(async()=>{try{const result=await activityStore.clear(ids);dataGeneration=result.generation;resetActivity(result.change);localStorage.removeItem(KEY+'-acquisition-scopes');coordinator.epoch(dataGeneration);messages.storageError=()=>'';messages.storageState=()=>ids?t("selected_activity_pruned_other_data_retained"):t("activity_cleared_exported_files_unaffected");return true;}catch(e){messages.storageError=()=>t("clear_failed")+i18n.status(e.message);startInferenceWorker();return false;}finally{clearing=false;buffer=[];updateAcquisitionPause();schedule(true);}})();chain=operation;return operation;}
+  async function clearData(ids=null){if(clearing)return false;backtrack?.pause('backtrack_reason_cleared');clearing=true;acquisition.setPause(t("clearing_activity"));coordinator.stop();acquisition.resetActivity();buffer=[];workerEpoch++;inferenceWorker?.terminate();inferenceWorker=null;activeJob=null;const operation=(async()=>{try{const result=await activityStore.clear(ids);dataGeneration=result.generation;resetActivity(result.change);localStorage.removeItem(KEY+'-acquisition-scopes');coordinator.epoch(dataGeneration);messages.storageError=()=>'';messages.storageState=()=>ids?t("selected_activity_pruned_other_data_retained"):t("activity_cleared_exported_files_unaffected");return true;}catch(e){messages.storageError=()=>t("clear_failed")+i18n.status(e.message);startInferenceWorker();return false;}finally{clearing=false;buffer=[];updateAcquisitionPause();schedule(true);}})();chain=operation;return operation;}
   // This API never bypasses the UI confirmation for ordinary use.
   api.clearWithConfirmation = clearWithConfirmation;
-  function injectStyle() { const style=el('style');style.textContent=".ptcg-window{position:fixed;z-index:10020;display:flex;flex-direction:column;box-sizing:border-box;min-width:180px;background:#112232;color:#eff4f9;border:1px solid #647c91;border-radius:8px;box-shadow:0 8px 28px #0009;font:13px/1.5 system-ui,sans-serif;overflow:hidden}\r\n.ptcg-window[hidden],.ptcg-body[hidden]{display:none}.ptcg-window header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;padding:7px 10px;background:#20394e;cursor:move;touch-action:none;min-height:28px}.ptcg-window header strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ptcg-window-controls{display:flex;gap:3px;flex-shrink:0}.ptcg-window .ptcg-window-icon{margin:0;padding:3px;display:flex;background:transparent;border:0}.ptcg-body{padding:10px;overflow:auto;overscroll-behavior:contain;min-height:0;flex:1}\r\n.ptcg-window button,.ptcg-window select,.ptcg-window input,.ptcg-window textarea{font:inherit;max-width:100%;box-sizing:border-box}.ptcg-window button{cursor:pointer;background:#29465e;border:1px solid #6685a0;border-radius:4px;color:#f7fbff;padding:4px 8px;margin:3px 4px 3px 0}.ptcg-window button:hover{background:#3d6381}.ptcg-window button:disabled{opacity:.45}.ptcg-window input[type=search],.ptcg-window input[type=text],.ptcg-window textarea{width:100%;background:#0c1b29;color:#fff;border:1px solid #748da4;border-radius:4px;padding:5px}.ptcg-window select{color:#fff;background:#244158;border:1px solid #7891a5;padding:4px}.ptcg-window input[type=color]{width:62px;height:30px}.ptcg-window input[type=checkbox]{accent-color:#78bcff}.ptcg-field{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0}.ptcg-field input[type=text]{width:65%}.ptcg-check{display:flex;align-items:center;gap:5px;padding:5px 0}.ptcg-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 8px}.ptcg-actions{display:flex;flex-wrap:wrap;margin-bottom:8px}.ptcg-player-row{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;border-bottom:1px solid #3d566a;padding:5px 0}.ptcg-player-name{border-left:4px solid}.ptcg-player-row small{color:#ffda90}.ptcg-window a{color:#a7d9ff;text-decoration:underline}.ptcg-warning{color:#ffdd98;margin:5px 0}.ptcg-window p{margin:8px 0}.ptcg-window h3{font-size:15px}.ptcg-window small{color:#bdd0e0}.ptcg-window details{margin:7px 0}.ptcg-window summary{cursor:pointer;color:#b7d0e5}.ptcg-event{padding:5px 0;border-bottom:1px solid #3c5366}.ptcg-compact-event{display:grid;grid-template-columns:82px 105px minmax(0,1fr);gap:0 6px;border-bottom:1px solid #334c60;padding:6px 0;align-items:center}.ptcg-compact-event>span+span{border-left:1px solid #667b8d;padding-left:6px}.ptcg-compact-portal,.ptcg-portal,.ptcg-portal a{min-width:0;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ptcg-event details .ptcg-portal{white-space:normal;overflow:visible}.ptcg-count{display:block;margin:6px 0}\r\n.ptcg-pin{background:none!important;border:0!important}.ptcg-pin svg{display:block;filter:drop-shadow(0 1px 2px #0009)}.ptcg-label{position:absolute;bottom:44px;left:14px;transform:translateX(-50%);white-space:nowrap;background:#102132ed;color:#fff;border:1px solid;border-radius:4px;padding:3px 6px;max-width:300px;overflow:hidden;text-overflow:ellipsis;font:12px/1.3 system-ui}\r\n@media(max-width:500px){.ptcg-grid{grid-template-columns:1fr}.ptcg-body{padding:8px}.ptcg-compact-event{grid-template-columns:62px 90px minmax(0,1fr);font-size:12px}.ptcg-label{max-width:230px}}\r\n\r\n.ptcg-ghost-tag{color:#ffd46c;background:#63274a;border:1px solid #ffa54a;border-radius:3px;padding:1px 5px}.ptcg-window .ptcg-ghost{border:1px solid #ffc565;background:#57273e}.ptcg-ghost-window{border:2px solid #ffb94d}.ptcg-ghost-pin .ptcg-label{box-shadow:0 0 0 2px #ffb94d}.ptcg-cluster{background:#21475a;color:#fff;border:2px solid #99daff;border-radius:12px;box-sizing:border-box;text-align:center;font:12px/26px system-ui;white-space:nowrap}.ptcg-cluster.ptcg-ghost{border-color:#ffb94d;background:#57273e}.ptcg-body{overflow-wrap:anywhere}\r\n\r\n.ptcg-person{background:none;border:0}.ptcg-event-icon{border:2px solid #87bbdb;border-radius:50%;background:#0a2130;text-align:center;box-sizing:border-box;font:bold 16px/18px system-ui;box-shadow:0 0 3px #000}.ptcg-event-focus{box-shadow:0 0 0 5px #ffe46c}.ptcg-row-symbol{display:inline-block;width:14px;height:14px;border:1px solid #86caff;border-radius:50%;font:11px/14px system-ui;margin-right:3px;text-align:center;cursor:pointer}.ptcg-person .ptcg-label{bottom:32px}\r\n\r\n.ptcg-capture{background:#443517!important;box-shadow:0 0 0 1px #ffd96c}.ptcg-link-arrow{background:none;border:0;pointer-events:none}.ptcg-link-arrow span{display:block;transform-origin:center;font:18px/18px system-ui;text-shadow:0 0 2px #000}.ptcg-charts svg{width:100%;height:auto;max-height:220px}.ptcg-event-legend{display:flex;flex-wrap:wrap;gap:5px 12px;font-size:11px}.ptcg-player-counts{flex-basis:100%;padding-left:8px}.ptcg-player-row{padding:9px 0;gap:6px 10px}.ptcg-field input[type=number]{width:115px;background:#153146;color:#fff;border:1px solid #87adc6;padding:4px}.ptcg-chart-summary{display:block;font-size:11px}.ptcg-person{pointer-events:auto}.ptcg-person .ptcg-label{pointer-events:none}\r\n\r\n/* 0.1.0.6 responsive in-page workspaces */\r\n.ptcg-workspace{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;box-sizing:border-box}.ptcg-workspace[hidden]{display:none!important}.ptcg-workspace>header{flex:none;touch-action:none}.ptcg-tabs{display:flex;flex:none;overflow-x:auto;gap:3px;padding:4px;min-height:36px;scrollbar-width:thin}.ptcg-tabs [role=tab]{flex:none;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ptcg-tabs [aria-selected=true]{border-bottom:3px solid #ffe17a;background:#314d64}.ptcg-tab-tools{display:flex;flex:none;gap:4px;padding:3px 8px;flex-wrap:wrap}.ptcg-tab-tools button{min-width:30px}.ptcg-workspace-content{flex:1;min-height:0;overflow:hidden}.ptcg-tab-panel{height:100%;min-height:0;overflow:hidden}.ptcg-tab-panel[hidden]{display:none!important}.ptcg-tab-panel>.ptcg-body{height:100%;box-sizing:border-box;overflow:auto;padding-bottom:25px}.ptcg-resize{position:absolute;bottom:0;right:0;cursor:nwse-resize;touch-action:none;padding:0 4px!important}.ptcg-charts svg{width:100%;height:auto;max-height:none}.ptcg-workspace:has(.ptcg-body){container-type:inline-size}.ptcg-workspace button:focus-visible,.ptcg-workspace select:focus-visible{outline:2px solid #ffdc70;outline-offset:-2px}.ptcg-tab-panel .ptcg-actions{flex-wrap:wrap}.ptcg-window input,.ptcg-window select{max-width:100%;box-sizing:border-box}.ptcg-compact-portal{overflow-wrap:anywhere;min-width:0}@container(max-width:360px){.ptcg-grid{grid-template-columns:1fr!important}.ptcg-compact-event{grid-template-columns:1fr!important}.ptcg-player-row{flex-wrap:wrap}.ptcg-field{display:flex;flex-wrap:wrap}.ptcg-charts{display:block!important}}.ptcg-workspace.minimized{height:42px}\r\n\r\n/* 0.1.0.7 compact close-only tabs and hover cards */\r\n.ptcg-tab-item{display:flex;align-items:center;flex:none;max-width:240px;border:1px solid #57778e;border-radius:4px}.ptcg-tabs .ptcg-tab-item [role=tab]{margin:0;border:0;max-width:205px}.ptcg-tab-item>.ptcg-window-icon{flex:none;margin:0;padding:5px;border:0}.ptcg-tabs{overflow-x:auto}.ptcg-workspace [data-window-action=resize] svg{width:16px;height:16px}.leaflet-tooltip.ptcg-hover{background:#102333f5;color:#eff7ff;border:1px solid #83b3d5;border-radius:6px;box-shadow:0 2px 10px #0009;max-width:310px;white-space:normal;pointer-events:none;font:12px/1.4 system-ui}.ptcg-hover-content>strong,.ptcg-hover-content>small{display:block;margin-bottom:4px}.ptcg-hover-row{display:flex;gap:4px 7px;flex-wrap:wrap;border-top:1px solid #476174;padding:3px 0}.ptcg-hover-row small{width:100%;overflow-wrap:anywhere;color:#c8d9e7}.ptcg-hover-row .ptcg-row-symbol{cursor:default}.ptcg-event-badge{position:absolute;right:-8px;bottom:-6px;background:#102333;border:1px solid #a6d4ee;border-radius:7px;font:9px/12px system-ui;min-width:12px;color:#f2f8ff}.ptcg-workspace [data-select-player][aria-pressed=true]{background:#35576f;border-color:#c5e8ff}.ptcg-resize{display:flex}.ptcg-tab-item [aria-selected=true]{box-shadow:inset 0 -3px #ffe17a}\r\n\r\n.ptcg-view-actions{position:sticky;top:0;z-index:3;background:#112232;border-bottom:1px solid #57778e;padding:3px 0;box-shadow:0 3px 5px #112232}\r\n\r\n/* The glyph is below its true anchor; a non-interactive leader keeps coincident\r\n   activity pins and Portal icons accessible without changing coordinates. */\r\n.ptcg-person:before{content:\"\";position:absolute;left:14px;top:-14px;width:2px;height:14px;background:#fff;box-shadow:0 0 2px #142536;pointer-events:none}.ptcg-person .ptcg-label{top:34px;bottom:auto;left:15px}.ptcg-pin .ptcg-label{pointer-events:none}\r\n.leaflet-tooltip.ptcg-hover{width:max-content;min-width:min(220px,calc(100vw - 24px));max-width:min(310px,calc(100vw - 24px))}.ptcg-hover-row strong{overflow-wrap:anywhere;max-width:100%}\r\n\r\n.ptcg-history-point{position:relative}.ptcg-history-diamond{display:block;width:12px;height:12px;transform:rotate(45deg);border:2px solid #fff;box-shadow:0 0 0 1px #102132}.ptcg-history-point .ptcg-label{top:22px;bottom:auto;left:8px;pointer-events:none}.ptcg-history-point::before{content:'';position:absolute;left:7px;top:-14px;height:14px;border-left:1px solid #fff;pointer-events:none}\r\n\r\n.ptcg-portal-activity{display:flex;flex-direction:column;gap:5px}.ptcg-portal-activity>h3{margin:0;flex:none}.ptcg-portal-activity>p{margin:3px 0;flex:none}.ptcg-portal-activity>button{align-self:flex-start;flex:none}.ptcg-portal-rows{flex:1;min-height:60px;overflow:auto;overscroll-behavior:contain}.ptcg-portal-row{display:flex;gap:4px;flex-wrap:wrap;border-top:1px solid #476174;padding:4px 0}.ptcg-portal-row>span{width:100%;color:#c8d9e7}\r\n\r\n/* The group badge leaves the true Portal anchor available for native selection. */\r\n.ptcg-cluster::before{content:\"\";position:absolute;left:78px;bottom:100%;height:52px;border-left:1px dotted #bfe8ff;pointer-events:none}\r\n\r\n.ptcg-tabs[hidden],.ptcg-workspace-content[hidden]{display:none!important}\r\n\r\n/* EchoTrace 0.1.1.5: scoped IITC CE dialog/tab/control styling. */\r\n.ptcg-window{font-family:Roboto,\"Helvetica Neue\",Helvetica,Arial,sans-serif;background:rgba(8,48,78,.96);border:1px solid #20a8b1;border-radius:0;color:#eee;box-shadow:0 3px 14px #0008;line-height:1.4}\r\n.ptcg-window header{background:#0f2c3f;border-bottom:1px solid #20a8b1;padding:4px 6px;gap:4px}\r\n.ptcg-window button{background:rgba(8,48,78,.9);color:#ffce00;border:1px solid #ffce00;border-radius:0;padding:3px 6px;min-height:26px}\r\n.ptcg-window button:hover{background:#0f2c3f;text-decoration:underline}.ptcg-window button:focus-visible,.ptcg-window input:focus-visible,.ptcg-window select:focus-visible{outline:2px solid #ffce00;outline-offset:1px}\r\n.ptcg-window button:disabled{cursor:default;text-decoration:none}.ptcg-window .ptcg-window-icon{color:#ffce00;min-width:24px;min-height:24px}.ptcg-window input[type=text],.ptcg-window input[type=search],.ptcg-window input[type=number],.ptcg-window input[type=datetime-local],.ptcg-window select,.ptcg-window textarea{background:#0f2c3f;border:1px solid #20a8b1;border-radius:0;color:#eee;padding:4px}\r\n.ptcg-window .ptcg-tabs{padding:3px 0 0;gap:2px;border-bottom:1px solid #20a8b1;background:rgba(8,48,78,.9)}.ptcg-window .ptcg-tab-item{border:1px solid #20a8b1;border-radius:0;max-width:270px}.ptcg-window .ptcg-tabs [role=tab]{color:#ffce00;padding:3px 7px;max-width:200px}.ptcg-window .ptcg-tab-item:has([aria-selected=true]){background:#0f2c3f;border-bottom-color:#0f2c3f}.ptcg-window .ptcg-tab-item [aria-selected=true]{background:#0f2c3f;box-shadow:inset 0 -2px #20a8b1;font-weight:bold}.ptcg-window .ptcg-tab-move{border:0;min-width:24px;padding:2px;margin:0;flex:none}\r\n.ptcg-window .ptcg-view-actions{background:#0f2c3f;border-bottom-color:#20a8b1;box-shadow:none}.ptcg-window fieldset{border:1px solid #20a8b1;margin:8px 0;padding:4px 8px;display:flex;flex-wrap:wrap;gap:3px 12px}.ptcg-window legend{color:#ffce00}.ptcg-window .ptcg-player-row{border-bottom:1px solid #20a8b166;gap:4px 6px;padding:6px 0}.ptcg-window .ptcg-player-name{min-width:0;max-width:calc(100% - 32px);overflow-wrap:anywhere;white-space:normal;text-align:left;border-left-width:3px}.ptcg-window .ptcg-player-activity{flex:none;margin-left:auto}.ptcg-window .ptcg-player-pick{flex:none;min-width:26px;padding:2px}.ptcg-window .ptcg-player-row>span,.ptcg-window .ptcg-player-counts,.ptcg-window .ptcg-player-state{flex-basis:100%;padding-left:0}.ptcg-window .ptcg-player-state:empty{display:none}.ptcg-window .ptcg-player-counts{color:#ccc}.ptcg-window .ptcg-player-row [aria-pressed=true]{background:#0f2c3f;border-color:#20a8b1;color:#ffce00}.ptcg-window .ptcg-body{padding:8px}\r\n@container(max-width:360px){.ptcg-window .ptcg-player-name{max-width:calc(100% - 32px)}.ptcg-window .ptcg-player-activity{margin-left:32px}.ptcg-window .ptcg-grid{grid-template-columns:1fr}.ptcg-window .ptcg-field{gap:4px}.ptcg-window .ptcg-tabs [role=tab]{max-width:150px}}\r\n\r\n.ptcg-follow-control {background:rgba(8,48,78,.96);color:#eee;padding:6px;border:1px solid #20a8b1;max-width:320px;display:flex;flex-wrap:wrap;gap:5px;font:12px Roboto,Arial,sans-serif}.ptcg-follow-control[hidden]{display:none}.ptcg-follow-control button{color:#ffce00;border:1px solid #ffce00;background:transparent;cursor:pointer}.ptcg-portal-row details{width:100%}\r\n\r\n.ptcg-possible-pin .ptcg-region-label{left:14px;transform:translateX(-50%);border-style:dashed;max-width:280px;pointer-events:none}\r\n\r\n.ptcg-possible-pin,.ptcg-possible-pin svg{pointer-events:none}.ptcg-possible-pin path,.ptcg-possible-pin circle{pointer-events:visiblePainted}\r\n\r\n.ptcg-region-break{position:absolute;left:26px;top:32px;width:16px;height:16px;line-height:16px;text-align:center;background:#122232;border:1px dashed #ffd285;border-radius:50%;color:#ffd285;font-weight:bold;pointer-events:none}\r\n\r\n.ptcg-resize{width:28px;min-width:28px;height:28px;min-height:28px;align-items:center;justify-content:center}.ptcg-workspace [data-window-action=resize] svg{width:18px;height:18px;pointer-events:none}\r\n\r\n.ptcg-workspace .ptcg-resize{cursor:nwse-resize}\r\n\r\n.ptcg-faction-badge{display:inline-flex;vertical-align:middle;margin-right:4px;align-items:center}.ptcg-faction-badge svg{width:13px;height:20px;pointer-events:none}.ptcg-crescent{overflow:visible}.ptcg-pin,.ptcg-cluster{pointer-events:none}.ptcg-pin svg,.ptcg-cluster svg{pointer-events:visiblePainted}.ptcg-pin .ptcg-label,.ptcg-cluster .ptcg-group-label{pointer-events:auto}.ptcg-cluster .ptcg-group-label{position:absolute;width:160px;transform:translateX(-50%);white-space:nowrap}.ptcg-possible-pin .ptcg-phone-walk{overflow:visible}\r\n\r\n/* internal.7: internal.5 IITC surfaces plus retained functional controls.\r\n   Fixed geographic anchors; no global screen collision layout or new leaders. */\r\n.ptcg-window .ptcg-field{flex-wrap:wrap}.ptcg-window input[type=datetime-local]{min-width:0;max-width:100%;width:215px}.ptcg-window input[type=range]{width:100%}\r\n.ptcg-player-sections{display:flex;gap:5px;border-bottom:1px solid #20a8b1;padding-bottom:4px;margin-bottom:6px}.ptcg-player-sections [aria-pressed=true]{border-bottom:2px solid #20a8b1;background:#0f2c3f}\r\n.ptcg-model-card{border:1px solid #20a8b1;padding:7px;margin:8px 0;background:#0f2c3f}\r\n.ptcg-history-status{flex-basis:100%;width:100%;min-height:48px;margin:3px 0!important;box-sizing:border-box;border-left:2px solid #20a8b1;padding:4px 7px;background:#0f2c3f}.ptcg-history-status summary{height:36px;min-height:36px;max-height:36px;overflow:hidden;font-size:12px;line-height:16px;overflow-wrap:anywhere}.ptcg-history-status div{padding:5px 0;line-height:1.5;color:#bdd0e0}.ptcg-inference-primary{min-height:20px;color:#eee}\r\n.ptcg-pin,.ptcg-cluster,.ptcg-possible-pin{background:none!important;border:0!important;pointer-events:none}.ptcg-location-pin{display:block;pointer-events:visiblePainted;filter:drop-shadow(0 1px 2px #0008)}.ptcg-cluster:before,.ptcg-person:before{display:none}\r\n.ptcg-event-icon{background:none!important;border:0!important;box-shadow:none!important;pointer-events:none!important;transition:none}.ptcg-event-body{position:relative;display:block;box-sizing:border-box;width:22px;height:22px;border:2px solid;border-radius:50%;background:#0a2130;font:bold 16px/18px system-ui;text-align:center;pointer-events:auto;box-shadow:0 0 3px #000}.ptcg-event-icon.ptcg-capture .ptcg-event-body{background:#443517;box-shadow:0 0 0 1px #ffd96c}.ptcg-event-icon.ptcg-event-focus .ptcg-event-body{box-shadow:0 0 0 5px #ffe46c}\r\n@container(max-width:360px){.ptcg-history-status summary{font-size:11px}.ptcg-window .ptcg-model-card{padding:5px}}\r\n\r\n/* internal.8: observed faction shape only; count and shared IITC label upright. */\r\n.ptcg-faction-controls>.ptcg-faction-presets{display:flex;flex-wrap:wrap;gap:3px;width:100%}.ptcg-faction-controls>.ptcg-field{width:100%;margin:3px 0}.ptcg-faction-controls input[type=range]{flex:1;min-width:80px}.ptcg-faction-controls [aria-pressed=true]{border-bottom:3px solid #20a8b1;background:#0f2c3f}.ptcg-faction-controls small{flex-basis:100%}\r\n.ptcg-pin .ptcg-observed-label,.ptcg-cluster .ptcg-observed-label{width:max-content;bottom:auto;transform:translateX(-50%);text-align:left;pointer-events:auto}\r\n.ptcg-pin .ptcg-solid-pin,.ptcg-cluster .ptcg-solid-pin,.ptcg-solid-pin svg{pointer-events:none}.ptcg-solid-pin path,.ptcg-solid-pin circle,.ptcg-solid-pin text{pointer-events:visiblePainted}\r\n.leaflet-marker-icon.ptcg-pin,.leaflet-marker-icon.ptcg-cluster{pointer-events:none}\r\n\r\n";document.head.append(style); }
+  function injectStyle() { const style=el('style');style.textContent=".ptcg-window{position:fixed;z-index:10020;display:flex;flex-direction:column;box-sizing:border-box;min-width:180px;background:#112232;color:#eff4f9;border:1px solid #647c91;border-radius:8px;box-shadow:0 8px 28px #0009;font:13px/1.5 system-ui,sans-serif;overflow:hidden}\r\n.ptcg-window[hidden],.ptcg-body[hidden]{display:none}.ptcg-window header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;padding:7px 10px;background:#20394e;cursor:move;touch-action:none;min-height:28px}.ptcg-window header strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ptcg-window-controls{display:flex;gap:3px;flex-shrink:0}.ptcg-window .ptcg-window-icon{margin:0;padding:3px;display:flex;background:transparent;border:0}.ptcg-body{padding:10px;overflow:auto;overscroll-behavior:contain;min-height:0;flex:1}\r\n.ptcg-window button,.ptcg-window select,.ptcg-window input,.ptcg-window textarea{font:inherit;max-width:100%;box-sizing:border-box}.ptcg-window button{cursor:pointer;background:#29465e;border:1px solid #6685a0;border-radius:4px;color:#f7fbff;padding:4px 8px;margin:3px 4px 3px 0}.ptcg-window button:hover{background:#3d6381}.ptcg-window button:disabled{opacity:.45}.ptcg-window input[type=search],.ptcg-window input[type=text],.ptcg-window textarea{width:100%;background:#0c1b29;color:#fff;border:1px solid #748da4;border-radius:4px;padding:5px}.ptcg-window select{color:#fff;background:#244158;border:1px solid #7891a5;padding:4px}.ptcg-window input[type=color]{width:62px;height:30px}.ptcg-window input[type=checkbox]{accent-color:#78bcff}.ptcg-field{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0}.ptcg-field input[type=text]{width:65%}.ptcg-check{display:flex;align-items:center;gap:5px;padding:5px 0}.ptcg-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 8px}.ptcg-actions{display:flex;flex-wrap:wrap;margin-bottom:8px}.ptcg-player-row{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;border-bottom:1px solid #3d566a;padding:5px 0}.ptcg-player-name{border-left:4px solid}.ptcg-player-row small{color:#ffda90}.ptcg-window a{color:#a7d9ff;text-decoration:underline}.ptcg-warning{color:#ffdd98;margin:5px 0}.ptcg-window p{margin:8px 0}.ptcg-window h3{font-size:15px}.ptcg-window small{color:#bdd0e0}.ptcg-window details{margin:7px 0}.ptcg-window summary{cursor:pointer;color:#b7d0e5}.ptcg-event{padding:5px 0;border-bottom:1px solid #3c5366}.ptcg-compact-event{display:grid;grid-template-columns:82px 105px minmax(0,1fr);gap:0 6px;border-bottom:1px solid #334c60;padding:6px 0;align-items:center}.ptcg-compact-event>span+span{border-left:1px solid #667b8d;padding-left:6px}.ptcg-compact-portal,.ptcg-portal,.ptcg-portal a{min-width:0;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ptcg-event details .ptcg-portal{white-space:normal;overflow:visible}.ptcg-count{display:block;margin:6px 0}\r\n.ptcg-pin{background:none!important;border:0!important}.ptcg-pin svg{display:block;filter:drop-shadow(0 1px 2px #0009)}.ptcg-label{position:absolute;bottom:44px;left:14px;transform:translateX(-50%);white-space:nowrap;background:#102132ed;color:#fff;border:1px solid;border-radius:4px;padding:3px 6px;max-width:300px;overflow:hidden;text-overflow:ellipsis;font:12px/1.3 system-ui}\r\n@media(max-width:500px){.ptcg-grid{grid-template-columns:1fr}.ptcg-body{padding:8px}.ptcg-compact-event{grid-template-columns:62px 90px minmax(0,1fr);font-size:12px}.ptcg-label{max-width:230px}}\r\n\r\n.ptcg-ghost-tag{color:#ffd46c;background:#63274a;border:1px solid #ffa54a;border-radius:3px;padding:1px 5px}.ptcg-window .ptcg-ghost{border:1px solid #ffc565;background:#57273e}.ptcg-ghost-window{border:2px solid #ffb94d}.ptcg-ghost-pin .ptcg-label{box-shadow:0 0 0 2px #ffb94d}.ptcg-cluster{background:#21475a;color:#fff;border:2px solid #99daff;border-radius:12px;box-sizing:border-box;text-align:center;font:12px/26px system-ui;white-space:nowrap}.ptcg-cluster.ptcg-ghost{border-color:#ffb94d;background:#57273e}.ptcg-body{overflow-wrap:anywhere}\r\n\r\n.ptcg-person{background:none;border:0}.ptcg-event-icon{border:2px solid #87bbdb;border-radius:50%;background:#0a2130;text-align:center;box-sizing:border-box;font:bold 16px/18px system-ui;box-shadow:0 0 3px #000}.ptcg-event-focus{box-shadow:0 0 0 5px #ffe46c}.ptcg-row-symbol{display:inline-block;width:14px;height:14px;border:1px solid #86caff;border-radius:50%;font:11px/14px system-ui;margin-right:3px;text-align:center;cursor:pointer}.ptcg-person .ptcg-label{bottom:32px}\r\n\r\n.ptcg-capture{background:#443517!important;box-shadow:0 0 0 1px #ffd96c}.ptcg-link-arrow{background:none;border:0;pointer-events:none}.ptcg-link-arrow span{display:block;transform-origin:center;font:18px/18px system-ui;text-shadow:0 0 2px #000}.ptcg-charts svg{width:100%;height:auto;max-height:220px}.ptcg-event-legend{display:flex;flex-wrap:wrap;gap:5px 12px;font-size:11px}.ptcg-player-counts{flex-basis:100%;padding-left:8px}.ptcg-player-row{padding:9px 0;gap:6px 10px}.ptcg-field input[type=number]{width:115px;background:#153146;color:#fff;border:1px solid #87adc6;padding:4px}.ptcg-chart-summary{display:block;font-size:11px}.ptcg-person{pointer-events:auto}.ptcg-person .ptcg-label{pointer-events:none}\r\n\r\n/* 0.1.0.6 responsive in-page workspaces */\r\n.ptcg-workspace{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;box-sizing:border-box}.ptcg-workspace[hidden]{display:none!important}.ptcg-workspace>header{flex:none;touch-action:none}.ptcg-tabs{display:flex;flex:none;overflow-x:auto;gap:3px;padding:4px;min-height:36px;scrollbar-width:thin}.ptcg-tabs [role=tab]{flex:none;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ptcg-tabs [aria-selected=true]{border-bottom:3px solid #ffe17a;background:#314d64}.ptcg-tab-tools{display:flex;flex:none;gap:4px;padding:3px 8px;flex-wrap:wrap}.ptcg-tab-tools button{min-width:30px}.ptcg-workspace-content{flex:1;min-height:0;overflow:hidden}.ptcg-tab-panel{height:100%;min-height:0;overflow:hidden}.ptcg-tab-panel[hidden]{display:none!important}.ptcg-tab-panel>.ptcg-body{height:100%;box-sizing:border-box;overflow:auto;padding-bottom:25px}.ptcg-resize{position:absolute;bottom:0;right:0;cursor:nwse-resize;touch-action:none;padding:0 4px!important}.ptcg-charts svg{width:100%;height:auto;max-height:none}.ptcg-workspace:has(.ptcg-body){container-type:inline-size}.ptcg-workspace button:focus-visible,.ptcg-workspace select:focus-visible{outline:2px solid #ffdc70;outline-offset:-2px}.ptcg-tab-panel .ptcg-actions{flex-wrap:wrap}.ptcg-window input,.ptcg-window select{max-width:100%;box-sizing:border-box}.ptcg-compact-portal{overflow-wrap:anywhere;min-width:0}@container(max-width:360px){.ptcg-grid{grid-template-columns:1fr!important}.ptcg-compact-event{grid-template-columns:1fr!important}.ptcg-player-row{flex-wrap:wrap}.ptcg-field{display:flex;flex-wrap:wrap}.ptcg-charts{display:block!important}}.ptcg-workspace.minimized{height:42px}\r\n\r\n/* 0.1.0.7 compact close-only tabs and hover cards */\r\n.ptcg-tab-item{display:flex;align-items:center;flex:none;max-width:240px;border:1px solid #57778e;border-radius:4px}.ptcg-tabs .ptcg-tab-item [role=tab]{margin:0;border:0;max-width:205px}.ptcg-tab-item>.ptcg-window-icon{flex:none;margin:0;padding:5px;border:0}.ptcg-tabs{overflow-x:auto}.ptcg-workspace [data-window-action=resize] svg{width:16px;height:16px}.leaflet-tooltip.ptcg-hover{background:#102333f5;color:#eff7ff;border:1px solid #83b3d5;border-radius:6px;box-shadow:0 2px 10px #0009;max-width:310px;white-space:normal;pointer-events:none;font:12px/1.4 system-ui}.ptcg-hover-content>strong,.ptcg-hover-content>small{display:block;margin-bottom:4px}.ptcg-hover-row{display:flex;gap:4px 7px;flex-wrap:wrap;border-top:1px solid #476174;padding:3px 0}.ptcg-hover-row small{width:100%;overflow-wrap:anywhere;color:#c8d9e7}.ptcg-hover-row .ptcg-row-symbol{cursor:default}.ptcg-event-badge{position:absolute;right:-8px;bottom:-6px;background:#102333;border:1px solid #a6d4ee;border-radius:7px;font:9px/12px system-ui;min-width:12px;color:#f2f8ff}.ptcg-workspace [data-select-player][aria-pressed=true]{background:#35576f;border-color:#c5e8ff}.ptcg-resize{display:flex}.ptcg-tab-item [aria-selected=true]{box-shadow:inset 0 -3px #ffe17a}\r\n\r\n.ptcg-view-actions{position:sticky;top:0;z-index:3;background:#112232;border-bottom:1px solid #57778e;padding:3px 0;box-shadow:0 3px 5px #112232}\r\n\r\n/* The glyph is below its true anchor; a non-interactive leader keeps coincident\r\n   activity pins and Portal icons accessible without changing coordinates. */\r\n.ptcg-person:before{content:\"\";position:absolute;left:14px;top:-14px;width:2px;height:14px;background:#fff;box-shadow:0 0 2px #142536;pointer-events:none}.ptcg-person .ptcg-label{top:34px;bottom:auto;left:15px}.ptcg-pin .ptcg-label{pointer-events:none}\r\n.leaflet-tooltip.ptcg-hover{width:max-content;min-width:min(220px,calc(100vw - 24px));max-width:min(310px,calc(100vw - 24px))}.ptcg-hover-row strong{overflow-wrap:anywhere;max-width:100%}\r\n\r\n.ptcg-history-point{position:relative}.ptcg-history-diamond{display:block;width:12px;height:12px;transform:rotate(45deg);border:2px solid #fff;box-shadow:0 0 0 1px #102132}.ptcg-history-point .ptcg-label{top:22px;bottom:auto;left:8px;pointer-events:none}.ptcg-history-point::before{content:'';position:absolute;left:7px;top:-14px;height:14px;border-left:1px solid #fff;pointer-events:none}\r\n\r\n.ptcg-portal-activity{display:flex;flex-direction:column;gap:5px}.ptcg-portal-activity>h3{margin:0;flex:none}.ptcg-portal-activity>p{margin:3px 0;flex:none}.ptcg-portal-activity>button{align-self:flex-start;flex:none}.ptcg-portal-rows{flex:1;min-height:60px;overflow:auto;overscroll-behavior:contain}.ptcg-portal-row{display:flex;gap:4px;flex-wrap:wrap;border-top:1px solid #476174;padding:4px 0}.ptcg-portal-row>span{width:100%;color:#c8d9e7}\r\n\r\n/* The group badge leaves the true Portal anchor available for native selection. */\r\n.ptcg-cluster::before{content:\"\";position:absolute;left:78px;bottom:100%;height:52px;border-left:1px dotted #bfe8ff;pointer-events:none}\r\n\r\n.ptcg-tabs[hidden],.ptcg-workspace-content[hidden]{display:none!important}\r\n\r\n/* EchoTrace 0.1.1.5: scoped IITC CE dialog/tab/control styling. */\r\n.ptcg-window{font-family:Roboto,\"Helvetica Neue\",Helvetica,Arial,sans-serif;background:rgba(8,48,78,.96);border:1px solid #20a8b1;border-radius:0;color:#eee;box-shadow:0 3px 14px #0008;line-height:1.4}\r\n.ptcg-window header{background:#0f2c3f;border-bottom:1px solid #20a8b1;padding:4px 6px;gap:4px}\r\n.ptcg-window button{background:rgba(8,48,78,.9);color:#ffce00;border:1px solid #ffce00;border-radius:0;padding:3px 6px;min-height:26px}\r\n.ptcg-window button:hover{background:#0f2c3f;text-decoration:underline}.ptcg-window button:focus-visible,.ptcg-window input:focus-visible,.ptcg-window select:focus-visible{outline:2px solid #ffce00;outline-offset:1px}\r\n.ptcg-window button:disabled{cursor:default;text-decoration:none}.ptcg-window .ptcg-window-icon{color:#ffce00;min-width:24px;min-height:24px}.ptcg-window input[type=text],.ptcg-window input[type=search],.ptcg-window input[type=number],.ptcg-window input[type=datetime-local],.ptcg-window select,.ptcg-window textarea{background:#0f2c3f;border:1px solid #20a8b1;border-radius:0;color:#eee;padding:4px}\r\n.ptcg-window .ptcg-tabs{padding:3px 0 0;gap:2px;border-bottom:1px solid #20a8b1;background:rgba(8,48,78,.9)}.ptcg-window .ptcg-tab-item{border:1px solid #20a8b1;border-radius:0;max-width:270px}.ptcg-window .ptcg-tabs [role=tab]{color:#ffce00;padding:3px 7px;max-width:200px}.ptcg-window .ptcg-tab-item:has([aria-selected=true]){background:#0f2c3f;border-bottom-color:#0f2c3f}.ptcg-window .ptcg-tab-item [aria-selected=true]{background:#0f2c3f;box-shadow:inset 0 -2px #20a8b1;font-weight:bold}.ptcg-window .ptcg-tab-move{border:0;min-width:24px;padding:2px;margin:0;flex:none}\r\n.ptcg-window .ptcg-view-actions{background:#0f2c3f;border-bottom-color:#20a8b1;box-shadow:none}.ptcg-window fieldset{border:1px solid #20a8b1;margin:8px 0;padding:4px 8px;display:flex;flex-wrap:wrap;gap:3px 12px}.ptcg-window legend{color:#ffce00}.ptcg-window .ptcg-player-row{border-bottom:1px solid #20a8b166;gap:4px 6px;padding:6px 0}.ptcg-window .ptcg-player-name{min-width:0;max-width:calc(100% - 32px);overflow-wrap:anywhere;white-space:normal;text-align:left;border-left-width:3px}.ptcg-window .ptcg-player-activity{flex:none;margin-left:auto}.ptcg-window .ptcg-player-pick{flex:none;min-width:26px;padding:2px}.ptcg-window .ptcg-player-row>span,.ptcg-window .ptcg-player-counts,.ptcg-window .ptcg-player-state{flex-basis:100%;padding-left:0}.ptcg-window .ptcg-player-state:empty{display:none}.ptcg-window .ptcg-player-counts{color:#ccc}.ptcg-window .ptcg-player-row [aria-pressed=true]{background:#0f2c3f;border-color:#20a8b1;color:#ffce00}.ptcg-window .ptcg-body{padding:8px}\r\n@container(max-width:360px){.ptcg-window .ptcg-player-name{max-width:calc(100% - 32px)}.ptcg-window .ptcg-player-activity{margin-left:32px}.ptcg-window .ptcg-grid{grid-template-columns:1fr}.ptcg-window .ptcg-field{gap:4px}.ptcg-window .ptcg-tabs [role=tab]{max-width:150px}}\r\n\r\n.ptcg-follow-control {background:rgba(8,48,78,.96);color:#eee;padding:6px;border:1px solid #20a8b1;max-width:320px;display:flex;flex-wrap:wrap;gap:5px;font:12px Roboto,Arial,sans-serif}.ptcg-follow-control[hidden]{display:none}.ptcg-follow-control button{color:#ffce00;border:1px solid #ffce00;background:transparent;cursor:pointer}.ptcg-portal-row details{width:100%}\r\n\r\n.ptcg-possible-pin .ptcg-region-label{left:14px;transform:translateX(-50%);border-style:dashed;max-width:280px;pointer-events:none}\r\n\r\n.ptcg-possible-pin,.ptcg-possible-pin svg{pointer-events:none}.ptcg-possible-pin path,.ptcg-possible-pin circle{pointer-events:visiblePainted}\r\n\r\n.ptcg-region-break{position:absolute;left:26px;top:32px;width:16px;height:16px;line-height:16px;text-align:center;background:#122232;border:1px dashed #ffd285;border-radius:50%;color:#ffd285;font-weight:bold;pointer-events:none}\r\n\r\n.ptcg-resize{width:28px;min-width:28px;height:28px;min-height:28px;align-items:center;justify-content:center}.ptcg-workspace [data-window-action=resize] svg{width:18px;height:18px;pointer-events:none}\r\n\r\n.ptcg-workspace .ptcg-resize{cursor:nwse-resize}\r\n\r\n.ptcg-faction-badge{display:inline-flex;vertical-align:middle;margin-right:4px;align-items:center}.ptcg-faction-badge svg{width:13px;height:20px;pointer-events:none}.ptcg-crescent{overflow:visible}.ptcg-pin,.ptcg-cluster{pointer-events:none}.ptcg-pin svg,.ptcg-cluster svg{pointer-events:visiblePainted}.ptcg-pin .ptcg-label,.ptcg-cluster .ptcg-group-label{pointer-events:auto}.ptcg-cluster .ptcg-group-label{position:absolute;width:160px;transform:translateX(-50%);white-space:nowrap}.ptcg-possible-pin .ptcg-phone-walk{overflow:visible}\r\n\r\n/* internal.7: internal.5 IITC surfaces plus retained functional controls.\r\n   Fixed geographic anchors; no global screen collision layout or new leaders. */\r\n.ptcg-window .ptcg-field{flex-wrap:wrap}.ptcg-window input[type=datetime-local]{min-width:0;max-width:100%;width:215px}.ptcg-window input[type=range]{width:100%}\r\n.ptcg-player-sections{display:flex;gap:5px;border-bottom:1px solid #20a8b1;padding-bottom:4px;margin-bottom:6px}.ptcg-player-sections [aria-pressed=true]{border-bottom:2px solid #20a8b1;background:#0f2c3f}\r\n.ptcg-model-card{border:1px solid #20a8b1;padding:7px;margin:8px 0;background:#0f2c3f}\r\n.ptcg-history-status{flex-basis:100%;width:100%;min-height:48px;margin:3px 0!important;box-sizing:border-box;border-left:2px solid #20a8b1;padding:4px 7px;background:#0f2c3f}.ptcg-history-status summary{height:36px;min-height:36px;max-height:36px;overflow:hidden;font-size:12px;line-height:16px;overflow-wrap:anywhere}.ptcg-history-status div{padding:5px 0;line-height:1.5;color:#bdd0e0}.ptcg-inference-primary{min-height:20px;color:#eee}\r\n.ptcg-pin,.ptcg-cluster,.ptcg-possible-pin{background:none!important;border:0!important;pointer-events:none}.ptcg-location-pin{display:block;pointer-events:visiblePainted;filter:drop-shadow(0 1px 2px #0008)}.ptcg-cluster:before,.ptcg-person:before{display:none}\r\n.ptcg-event-icon{background:none!important;border:0!important;box-shadow:none!important;pointer-events:none!important;transition:none}.ptcg-event-body{position:relative;display:block;box-sizing:border-box;width:22px;height:22px;border:2px solid;border-radius:50%;background:#0a2130;font:bold 16px/18px system-ui;text-align:center;pointer-events:auto;box-shadow:0 0 3px #000}.ptcg-event-icon.ptcg-capture .ptcg-event-body{background:#443517;box-shadow:0 0 0 1px #ffd96c}.ptcg-event-icon.ptcg-event-focus .ptcg-event-body{box-shadow:0 0 0 5px #ffe46c}\r\n@container(max-width:360px){.ptcg-history-status summary{font-size:11px}.ptcg-window .ptcg-model-card{padding:5px}}\r\n\r\n/* internal.8: observed faction shape only; count and shared IITC label upright. */\r\n.ptcg-faction-controls>.ptcg-faction-presets{display:flex;flex-wrap:wrap;gap:3px;width:100%}.ptcg-faction-controls>.ptcg-field{width:100%;margin:3px 0}.ptcg-faction-controls input[type=range]{flex:1;min-width:80px}.ptcg-faction-controls [aria-pressed=true]{border-bottom:3px solid #20a8b1;background:#0f2c3f}.ptcg-faction-controls small{flex-basis:100%}\r\n.ptcg-pin .ptcg-observed-label,.ptcg-cluster .ptcg-observed-label{width:max-content;bottom:auto;transform:translateX(-50%);text-align:left;pointer-events:auto}\r\n.ptcg-pin .ptcg-solid-pin,.ptcg-cluster .ptcg-solid-pin,.ptcg-solid-pin svg{pointer-events:none}.ptcg-solid-pin path,.ptcg-solid-pin circle,.ptcg-solid-pin text{pointer-events:visiblePainted}\r\n.leaflet-marker-icon.ptcg-pin,.leaflet-marker-icon.ptcg-cluster{pointer-events:none}\r\n\r\n\r\n/* Compact existing IITC primary tabs; retain move/close and geographic marker anchors. */\r\n.ptcg-tabs .ptcg-primary-tab [role=tab]{font-size:12px;padding:4px 3px}.ptcg-primary-tab>.ptcg-tab-move,.ptcg-primary-tab>.ptcg-window-icon{padding:2px;margin:0;width:16px;min-width:16px}.ptcg-primary-tab>.ptcg-window-icon svg{width:12px;height:12px}\r\n.ptcg-event>details>summary .ptcg-compact-event{display:inline-grid;width:calc(100% - 16px);box-sizing:border-box}.ptcg-hover-row details{width:100%}\r\n\r\n/* Individual workspace/container width, without changing unrelated tooltips. */\r\n.ptcg-compact-event{grid-template-columns:minmax(8ch,1fr) minmax(11ch,1.3fr) minmax(0,2fr);width:100%;box-sizing:border-box;align-items:start;gap:5px 8px;min-width:0}\r\n.ptcg-compact-event>*{min-width:0;overflow-wrap:anywhere}.ptcg-compact-event .ptcg-event-kind{display:flex;align-items:baseline;flex-wrap:wrap;gap:3px}.ptcg-event-time{font-variant-numeric:tabular-nums;overflow-wrap:normal}.ptcg-event-kind .ptcg-event-action{white-space:normal;overflow-wrap:normal;text-align:left;margin:0;padding:0;border:0;background:transparent;color:inherit}.ptcg-event-kind .ptcg-event-action:hover{background:transparent;text-decoration:underline}.ptcg-compact-event .ptcg-portal{display:inline;white-space:normal;overflow:visible;overflow-wrap:anywhere}.ptcg-compact-event .ptcg-compact-portal{display:block;white-space:normal;overflow:visible}.ptcg-event-context{overflow-wrap:anywhere}.ptcg-event-context>small,.ptcg-compact-portal>small{display:block}.ptcg-portal-row{display:block}.ptcg-portal-row>summary .ptcg-compact-event{display:inline-grid;width:calc(100% - 18px)}.ptcg-hover-row>.ptcg-compact-event{display:flex;flex-wrap:wrap;border:0}.ptcg-hover .ptcg-event-context{flex-basis:100%}.ptcg-hover .ptcg-compact-event>span+span{border:0;padding:0}\r\n@container (min-width:650px){.ptcg-compact-event{grid-template-columns:minmax(12ch,1.3fr) minmax(18ch,1.5fr) minmax(0,2fr)}}\r\n@container (max-width:360px){.ptcg-compact-event{grid-template-columns:1fr!important}.ptcg-compact-event>span+span{border-left:0;padding-left:0}.ptcg-compact-event .ptcg-event-time{white-space:normal}}\r\n.ptcg-capture-status,.ptcg-map-interval{overflow-wrap:anywhere}.ptcg-link-arrow span{-webkit-text-stroke:.6px #000;text-shadow:1px 0 #000,-1px 0 #000,0 1px #000,0 -1px #000}\r\n\r\n.ptcg-compact-event .ptcg-portal a{display:inline;white-space:normal;overflow:visible;overflow-wrap:anywhere}\r\n";document.head.append(style); }
   async function setup() {
     if (started) return; started = true; loadSettings(); refreshLabelCatalog(); injectStyle();
-    activityStore=createTrackerStorage({window,core,name:DB,persist:()=>settings.persist,capacity:()=>({enabled:settings.storageLimits,maxRecords:settings.maxRecords,maxBytes:settings.maxMegabytes*1048576}),saved:(ids,conflicts,cross)=>{for(const id of ids)persisted.add(id);for(const id of conflicts)savedConflicts.add(id);for(const c of cross)model.conflicts.set(c.id,c);messages.storageError=()=>'';messages.storageState=()=>t("storage_transaction_completed");},error:message=>{messages.storageError=()=>i18n.status(message);messages.storageState=()=>t("save_incomplete_data_remains_in_this_page");schedule();},epoch:adoptEpoch});
+    activityStore=createTrackerStorage({window,core,name:DB,persist:()=>settings.persist,capacity:()=>({enabled:settings.storageLimits,maxRecords:settings.maxRecords,maxBytes:settings.maxMegabytes*1048576,extraBytes:backtrackArchiveBytes}),saved:(ids,conflicts,cross)=>{for(const id of ids)persisted.add(id);for(const id of conflicts)savedConflicts.add(id);for(const c of cross)model.conflicts.set(c.id,c);messages.storageError=()=>'';messages.storageState=()=>t("storage_transaction_completed");},error:message=>{messages.storageError=()=>i18n.status(message);messages.storageState=()=>t("save_incomplete_data_remains_in_this_page");schedule();},epoch:adoptEpoch});
     coordinator=createTrackerCoordination({window,identity:()=>window.PLAYER?.nickname,generation:()=>dataGeneration,paused:()=>clearing||document.hidden||window.isIdle?.()||!window.map.hasLayer(masterLayer),budget:()=>({enabled:settings.budgetEnabled,burstMs:settings.burstMs,burstPages:settings.burstPages,windowMs:settings.budgetWindowMs,requests:settings.budgetRequests,cooldownMs:settings.budgetCooldownMs}),transport:(p,ok,fail)=>{ownDispatch=true;try{return window.postAjax('getPlexts',p,ok,(xhr,_status,textStatus)=>{const retry=xhr?.getResponseHeader?.('Retry-After'),n=Number(retry);fail({status:xhr?.status||0,cancelled:textStatus==='abort',retryAfterMs:retry?(Number.isFinite(n)?n*1000:Math.max(0,Date.parse(retry)-Date.now())):0});});}finally{ownDispatch=false;}},epoch:async()=>{try{const d=await activityStore.read();await adoptEpoch(d.generation,d.change);}catch(e){messages.storageError=()=>t("tab_clear_status_unconfirmed")+i18n.status(e.message);requestRender();}},change:()=>{if(coordinator&&!coordinator.snapshot().owner.length)flushNative();requestRender();}});
-    wm = createTrackerWindows(document, window,{t,onActivate:workspaceActivated,onFocus:workspaceFocused,onHide:workspaceHidden,onClose:workspaceClosed});
+    wm = createTrackerWindows(document, window,{t,migrateSaved:migrateNavigation,captureReading:w=>{if(!w.player)return null;const a=readingAnchor(w.body,'[data-presentation-row]');return a.id?{id:a.id,offset:a.offset,scroll:a.scroll,ids:a.ids}:w.readingAnchor;},onActivate:workspaceActivated,onFocus:workspaceFocused,onHide:workspaceHidden,onClose:workspaceClosed,beforeResize:c=>[...wm?.windows.values()||[]].filter(w=>w.owner===c.id&&!w.node.hidden).map(w=>({node:w.body,anchor:readingAnchor(w.body,'[data-presentation-row]')})).concat(pinnedPortal?.w.owner===c.id?[{node:pinnedPortal.rows,anchor:readingAnchor(pinnedPortal.rows,'[data-portal-event]'),selector:'[data-portal-event]'}]:[]),afterResize:rows=>{for(const r of rows||[])restoreAnchor(r.node,r.anchor,r.selector||'[data-presentation-row]');}});
     let resolvedLocale=i18n.locale();listenDOM(window,'languagechange',()=>{const next=i18n.locale();if(settings.language==='auto'&&next!==resolvedLocale){refreshLocale();}resolvedLocale=next;});
     wm.createContainer('portal',420,460,{title:t("portal_activity"),standalone:true,initialHidden:true});
-    registerPanes();api.panes=panes;
+    const windowGet=wm.windows.get.bind(wm.windows);wm.windows.get=id=>windowGet(legacyPanels[id]?.[0]||id);registerPanes();api.panes=panes;
     clusterLayer=L.layerGroup().addTo(window.map);api.clusterLayer=clusterLayer;
     eventLayer=L.layerGroup().addTo(window.map);inferenceLayer=L.layerGroup().addTo(window.map);api.eventLayer=eventLayer;api.inferenceLayer=inferenceLayer;
     masterLayer=L.layerGroup();let displayPrefs={};try{displayPrefs=JSON.parse(localStorage.getItem('ingress.intelmap.layergroupdisplayed')||'{}')||{};}catch(_){}const masterVisible=Object.hasOwn(displayPrefs,'EchoTrace')?displayPrefs.EchoTrace:displayPrefs['Player Tracker Advanced — khresist — 總開關']!==false;window.layerChooser.addOverlay(masterLayer,'EchoTrace',{default:masterVisible});api.masterLayer=masterLayer;startInferenceWorker();installFollowControl();listenMap('dragstart',pauseFollow);const container=window.map.getContainer();listenDOM(container,'wheel',pauseFollow,{passive:true});listenDOM(container,'dblclick',pauseFollow);listenDOM(container,'touchstart',pauseFollow,{passive:true});listenDOM(container,'click',e=>{if(e.target.closest('.leaflet-control-zoom'))pauseFollow();},true);listenDOM(container,'keydown',e=>{if(['+','-','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))pauseFollow();});
@@ -4866,8 +5848,8 @@ function createTrackerCore() {
     }
 
     api.layers = layers; api.layer = layers.RES;
-    listenMap('layeradd layerremove', e => { if(Object.values(layers).includes(e.layer)||e.layer===masterLayer){const role=Object.keys(layers).find(r=>layers[r]===e.layer);if(role){settings.roleVisibility[role]=window.map.hasLayer(e.layer);saveSettings();}updateAcquisitionPause();if(e.layer===masterLayer&&!window.map.hasLayer(masterLayer)){clearClusterGraphics();clearEventGraphics();closePortalActivity();clearInferenceGraphics();for(const l of Object.values(layers))l.clearLayers();drawn.clear();}requestRender(true);} });
-    listenMap('zoomend moveend', () => { backgroundInterest();acquisition?.scopeChanged();updateAcquisitionPause();requestRender(true); });
+    listenMap('layeradd layerremove', e => { if(Object.values(layers).includes(e.layer)||e.layer===masterLayer){const role=Object.keys(layers).find(r=>layers[r]===e.layer);if(role){settings.roleVisibility[role]=window.map.hasLayer(e.layer);saveSettings();}updateAcquisitionPause();if(e.layer===masterLayer&&!window.map.hasLayer(masterLayer)){clearEventFocus();backtrack?.pause('backtrack_reason_layer');capture?.cancel('master-off');clearClusterGraphics();clearEventGraphics();closePortalActivity();clearInferenceGraphics();for(const l of Object.values(layers))l.clearLayers();drawn.clear();}requestRender(true);} });
+    listenMap('zoomend moveend', () => { if(backtrack?.snapshot().active&&JSON.stringify(acquisitionTarget().bounds)!==JSON.stringify(backtrack.snapshot().bounds))backtrack.pause('backtrack_reason_area');backgroundInterest();acquisition?.scopeChanged();updateAcquisitionPause();requestRender(true); });
     const toolbox=document.getElementById('toolbox');if(toolbox){const a=el('a','EchoTrace');a.href='#';a.addEventListener('click',e=>{e.preventDefault();openPanel();});toolbox.append(a);cleanup.push(()=>a.remove());}
     hook('publicChatDataAvailable', handle);hook('portalSelected',nativePortalSelected);
     // The native public hook still exists in current CE; no double generic hook or extra request loop.
@@ -4878,13 +5860,13 @@ function createTrackerCore() {
         query.addResult({ title: escape(name), description: NAME+' · ' + time(v.last.time) + (v.uncertainLatest ? t("newer_position_unknown") : '') + (v.ambiguous ? t("multiple_simultaneous_positions_285") : ''), position: undefined, onSelected: (_result, e) => { e?.stopPropagation?.(); locate(name); return true; } });
       }
     });
-    initAcquisition();saveSettings();backgroundInterest(); openPanel(); wm.restoreTabs(t=>{if(t.player)playerWindow(t.player,t.kind||'reader',true);else if(['dashboard','settings','storage','export','about','auto'].includes(t.id))openPanel(t.id);else if(t.kind==='overlap'){try{const names=Array.isArray(t.members)?t.members:JSON.parse(t.id.slice('overlap:'.length));if(Array.isArray(names)&&names.every(n=>typeof n==='string'&&n.trim()))openOverlap('',names);}catch(_){}}}); if(!settings.selectionOwner){for(const c of wm.initialState.containers||[]){const w=wm.get(c.active);if(!c.hidden&&w?.kind==='overlap'&&!w.groupReleased&&JSON.stringify(w.members.map(n=>n.toLowerCase()).sort())===JSON.stringify(settings.overviewSelection.map(n=>n.toLowerCase()).sort())){settings.selectionVersion++;settings.selectionOwner={id:w.id,version:settings.selectionVersion};saveSettings();break;}}}openPanel('dashboard');refreshLocale();schedule(true);
+    initAcquisition();initBacktrack();saveSettings();backgroundInterest();for(const id of primaryIds)openPanel(id); wm.restoreTabs(t=>{if(t.player)playerWindow(t.player,t.kind||'reader',true);else if([...primaryIds,...Object.keys(legacyPanels)].includes(t.id))openPanel(t.id);else if(t.kind==='overlap'){try{const names=Array.isArray(t.members)?t.members:JSON.parse(t.id.slice('overlap:'.length));if(Array.isArray(names)&&names.every(n=>typeof n==='string'&&n.trim()))openOverlap('',names);}catch(_){}}}); if(!settings.selectionOwner){for(const c of wm.initialState.containers||[]){const w=wm.get(c.active);if(!c.hidden&&w?.kind==='overlap'&&!w.groupReleased&&JSON.stringify(w.members.map(n=>n.toLowerCase()).sort())===JSON.stringify(settings.overviewSelection.map(n=>n.toLowerCase()).sort())){settings.selectionVersion++;settings.selectionOwner={id:w.id,version:settings.selectionVersion};saveSettings();break;}}}if(!wm.initialState.tabs?.length)openPanel('dashboard');refreshLocale();schedule(true);
     try { await openDatabase(); await restore(); messages.storageState=()=>settings.persist ? t("saved_data_restored") : t("new_activity_stays_in_this_page"); }
     catch (e) { messages.storageError=()=>t("storage_unavailable_data_stays_in_this_page") + i18n.status(e.message); messages.storageState=()=>t("storage_failed"); }
     ready = true;const waiting=buffer;buffer=[];for(const b of waiting)accept(b.events,b.meta);if(dataGeneration===0)seedCache();else messages.cacheWarning=()=>t("cleared_cache_is_not_replayed_awaiting_new_comm");schedule(true);
     // Presentation-only aging; never requests COMM/map data or scans IndexedDB.
-    function tick(){if(disposed)return;renderHistorySummary();coordinator.checkIdentity();api.notifyNativeIdle();flushNative();updateAcquisitionPause();if(liveObservation){for(const name of drawn.keys())dirty.add(name);schedule();syncObservationInputs();}displayTimer=window.setTimeout(tick,1000);}displayTimer=window.setTimeout(tick,1000);
-    api.dispose=()=>{disposed=true;cancelHistoryAction();clearTimeout(displayTimer);clearTimeout(pendingRender);acquisition.dispose();coordinator.dispose();activityStore.dispose();clearEventGraphics();closePortalActivity();if(evidenceRenderer&&window.map.hasLayer(evidenceRenderer))window.map.removeLayer(evidenceRenderer);inferenceWorker?.terminate();for(const f of cleanup.splice(0))f();wm.dispose();window.jQuery?.(document).off('.ptAdvanced');};window.addEventListener('pagehide',()=>api.dispose(),{once:true});
+    function tick(){if(disposed)return;renderHistorySummary();updateBacktrackUI();coordinator.checkIdentity();api.notifyNativeIdle();flushNative();updateAcquisitionPause();if(liveObservation){for(const name of drawn.keys())dirty.add(name);schedule();syncObservationInputs();}displayTimer=window.setTimeout(tick,1000);}displayTimer=window.setTimeout(tick,1000);
+    api.dispose=()=>{clearEventFocus();capture?.dispose();historySession?.reset();backtrack?.dispose();disposed=true;cancelHistoryAction();clearTimeout(displayTimer);clearTimeout(pendingRender);acquisition.dispose();coordinator.dispose();activityStore.dispose();clearEventGraphics();closePortalActivity();if(evidenceRenderer&&window.map.hasLayer(evidenceRenderer))window.map.removeLayer(evidenceRenderer);inferenceWorker?.terminate();for(const f of cleanup.splice(0))f();wm.dispose();window.jQuery?.(document).off('.ptAdvanced');};window.addEventListener('pagehide',()=>api.dispose(),{once:true});
   }
   api.setup = setup;
   setup.info = { ...info, pluginId: 'player-tracker-chatgpt', script: { name: NAME, version: VERSION, description: t("public_comm_player_activity_tracker_standalone_plugin") } };

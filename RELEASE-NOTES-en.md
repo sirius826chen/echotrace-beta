@@ -1,18 +1,39 @@
-# EchoTrace 0.1.1.6 official stable release
+# EchoTrace 0.1.1.7 official stable
 
-Owner accepted internal.8. This release preserves its behavior and changes only channel/build identification and update/download metadata. Four layers,configurable faction markers/shared labels,historical experiments,Auto/saved language,raw data/follow/two workspaces remain.
+2026-10-20. Owner accepted the final color-corrected dev.4. This release aggregates dev.1–dev.4 relative to stable 0.1.1.6. Development remains private; this repository contains distribution artifacts only.
 
-[Install stable](https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.user.js) · [Update metadata](https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.meta.js) · [Official Release](https://github.com/sirius826chen/echotrace-beta/releases/tag/v0.1.1.6)
+**[Install/update 0.1.1.7](https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.user.js) · [Official Release](https://github.com/sirius826chen/echotrace-beta/releases/tag/v0.1.1.7) · [Update metadata](https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.meta.js)**
 
-Internal.8 disables update checks with downloadURL none. Same-version0.1.1.6 channel enrollment requires ONE manual installation of this official.user.js,replacing the same EchoTrace identity,then reloading IITC. Do not install a duplicate or clear data. Identity/storage keys/runtime remain unchanged; saved orientation/gap/language/preferences remain.
+[English changelog](CHANGELOG-en.md) · [繁中改版內容](CHANGELOG-zh-TW.md) · [English release notes](RELEASE-NOTES-en.md) · [繁中 Release 說明](RELEASE-NOTES-zh-TW.md) · [Credits and rights](SOURCE-PROVENANCE.md)
 
-0.1.1.5 has no explicit updateURL/downloadURL. A manager may check its original install URL,which does not point to this stable feed; automatic migration is not guaranteed. Install official once manually.
+## Installation and updating
 
-With manager automatic checks enabled,future owner-approved higher numeric official releases can be checked/downloaded through these fixed URLs. Timing/confirmation depend on manager settings; immediate or silent installation is not promised. Active browser settings are not changed. Internal candidates continue to disable updates; owner acceptance is required for promotion.
+Back up RAW. Existing stable 0.1.1.6 users can receive the higher 0.1.1.7 through their manager's unchanged fixed updateURL/downloadURL. Timing, checks and confirmation depend on manager settings; silent/immediate installation is not promised.
 
-Runtime is byte-identical to accepted internal.8 after exact BUILD channel/candidate normalization,reusing514 source-bound checks. Published version remains0.1.1.6; same-version runtime/archive bytes are immutable and future behavior changes require a higher numeric version. Public HTTP feed verification and isolated manager mechanism checks are distinct. No Codex authenticated Intel/field accuracy measurement; historical inference remains experimental.
+Internal dev.4 disables checks (downloadURL none, no updateURL). Manually install this official version ONCE to replace the same EchoTrace identity, then reload IITC and join stable updates. Keep one script, without clearing data. Older installations without the stable contract should also enroll manually. Name/id/namespace/database/settings keys remain; data, saving/language/marker orientation/gap and workspace preferences migrate through existing behavior.
 
-[Tampermonkey documentation](https://www.tampermonkey.net/documentation.php?locale=zh_&q=update_url) · [Credits/licenses](SOURCE-PROVENANCE.md)
+## Controls and accepted cumulative changes
 
+Five primary entries are Player overview, Activity records (Live acquisition / Historical backtracking / Record download), Map display, Data management and Settings. Player Activity/Inference pages retain one expandable complete-source list. Shared inference settings exist once; three historical outputs have independent saved choices and default OFF when absent. Auto/en/zh-TW/zh-CN/ja and legacy navigation/layout migration remain.
 
-Focused promotion checks retain same-identity data/preferences. Isolated Tampermonkey5.5.1/localhost passed manually triggered check/download/confirmed replacement. Higher-version0.1.1.7 was an unpublished local fixture; public remains0.1.1.6. Active-profile/unattended scheduled installation was not tested.
+Independently resized player/Portal rows share a time-first responsive layout and retain GUID/viewport-offset reading, focus and expanded details during ticks/insertion/resizing. Created-Link summaries/hover show exact origin → destination and length even from destination context; both lookups remain. Unknown direction/coordinates are explicit, and icons remain origin-only. Clicking an action temporarily highlights exactly its event Link for ~3 seconds, with replacement/clear/master-OFF cleanup, without changing native Links or permanent switches. Destroyed object endpoints do not establish player position.
+
+Final colors: ONLY interaction-position dashed paths use RES bright purple #d45cff / ENL bright yellow #ffed32 with black outlines. Actual created-Link lines/arrows retain RES blue #75c8ff / ENL green #80ef98 and #102132 backing. Destroyed objects retain reliable original-object faction colors and their independent default-OFF switch. Faction emblems/names/regions/native IITC Links remain unchanged.
+
+Ordinary eligible interaction paths span six-minute gaps, while historical inference still splits at >=6 minutes. Activity directly shows the existing 40m evidence model's required-speed lower bound/minimum distance, separately labelled center/witness reference speed, actual source interval/category and sources, independently of inference/Worker availability. Same-Portal/overlap is not proof of stationary presence.
+
+Portal headers summarize ALL loaded records within current time/player/faction scope, independently of row pagination. Canonical human faction counts, other accounts, system rows, raw/folded totals, raw categories and incoming/outgoing/uncertain relations remain distinct. Incoming relation does not prove direct presence. Conservative positive evidence alone folds flip cascades; every raw child remains and unknown human operators are never guessed. Fading uses existing source-time/lookback formulas. Closing/hiding the LAST player/group context releases selection restrictions; inactive/minimized open contexts still count, without clearing watches/RAW or stopping persistent following.
+
+## Map time versus archival download
+
+Map lookback/backtracking is <=24h across UI/player-add-hour/manual/auto/API paths; the week option is removed and legacy oversized preferences visibly migrate. Older RAW/backups remain. Actual earliest/latest acquired timestamps include milliseconds and empty states; no arbitrary map-history start calendar or Date.now pretending to be a record.
+
+History pauses EchoTrace live, freezes the acquired right endpoint and extends left with older pages. Native/other-plugin COMM can continue normally; newer RAW remains stored without advancing history cutoff. Step completion/stop/error/limit/clear/area/task switch restores the prior ON/OFF, preserving explicit user OFF. Reload restores the live choice but leaves history paused for manual continuation. Inference inspection time is separate.
+
+Record download adapts the COMM Capture 0.1.0-dev.2 IITC preview, public all only, fixed bounds and shared coordination/backoff. Explicit archival periods MAY exceed 24h without expanding/inserting map/native data. Default sequential delay1200ms, minimum800ms, default100 pages (1–500), at most two retries. ingress-comm-capture/schema1.0.0 retains full page responses, duplicate/conflicting GUID occurrences, unknown/out-of-range fields, queries/timing/errors and completion state. Cancelled partial bundles remain downloadable; summary never rewrites RAW. Cookies/credentials/headers are not collected. Complete means requested boundary/empty result, not guaranteed server history. Existing import formats remain; no new Capture-bundle-to-map importer is claimed.
+
+## Validation and limits
+
+Promotion changes version/release metadata only; normalized runtime equals accepted corrected dev.4 byte-for-byte. New release regressions, real isolated Edge/IITC/Leaflet/Worker/IndexedDB/manager/schema checks and public HTTP/asset hashes are recorded separately from old historical383 results. Full source/tests/evidence remain private. Manager checks/confirmation are manually triggered in an isolated profile, not a guarantee of unattended behavior in every manager.
+
+No owner authenticated Intel/active browser profile, field accuracy or Anomaly stress test is claimed. COMM is not GPS; conditional straight routes are not roads/journeys or global-optimum proofs. Existing projection/numerical/branch/server-retention/capacity/1000-history-page limits remain. Existing RES+NIA/mixed-account marker white fallback remains unchanged. No global flip/immunity monitor or separately discussed performance feature was added.

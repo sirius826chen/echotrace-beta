@@ -1,3 +1,13 @@
+# EchoTrace 0.1.1.7 source and rights
+
+Original EchoTrace code remains under its applicable khresist MIT notice. Existing third-party polygon-clipping/splaytree/Microsoft-helper and official Ingress artwork/trademark notices remain intact; those assets are not relicensed by this release.
+
+The archival adapter incorporates bundle/summary behavior adapted from COMM Capture 0.1.0-dev.2 IITC development preview. That supplied reference did not include an explicit license grant. Its notices/identity/provenance are retained in the private source package; khresist MIT does not purport to relicense upstream rights. This is not a claim of stable upstream acceptance, official Ingress affiliation or a new upstream license.
+
+Public distribution contains the runtime installer, matching metadata, release manifest, checksums and reader-facing bilingual documents/licenses. Private source/tests/evidence/history and owner data/browser profiles are excluded. Final accepted runtime only receives official version/channel metadata changes.
+
+## Retained earlier credits
+
 # EchoTrace source and licenses / 來源與授權
 
 Original EchoTrace core/UI/adapters/models/pin geometry by khresist use MIT. See LICENSE. The bundled polygon-clipping0.15.7 retains Mike Fogel/Alexander Milevski MIT notices, including its splaytree attribution; see licenses/polygon-clipping-MIT.txt. The bundled Microsoft TypeScript helpers retain Apache2.0 notices and licenses/Apache-2.0.txt. Runtime copyright notices remain intact.

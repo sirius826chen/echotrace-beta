@@ -1,0 +1,17 @@
+{
+  "product": "EchoTrace by khresist",
+  "version": "0.1.1.7",
+  "channel": "stable",
+  "ownerApproved": true,
+  "acceptedBaseline": "corrected 0.1.1.7-dev.4",
+  "acceptedInstallerSha256": "201bd87bf0a4f850f91b0476162b350cb12e3297d41e3999198dce7792ef8260",
+  "installerSha256": "7be98383d99c598f3ba76cd5cd4c22953b4df5e1e29fa332f35636a3ce0d8b52",
+  "metadataSha256": "5bdeeec45674ae6360ab1fa763959857f2cf58593208795f8fb63610574f87c4",
+  "normalizedRuntimeBodySha256": "90daaf1ca7c39342024c56cd738dd00c7903ea18ade099b5ba8083ab6d33c965",
+  "downloadURL": "https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.user.js",
+  "updateURL": "https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.meta.js",
+  "releaseTag": "v0.1.1.7",
+  "checks": 391,
+  "correctedColorScope": "Only interaction-position paths purple/yellow+black; created Link and arrows original RES #75c8ff/ENL #80ef98; event-line backing #102132; destroyed objects original faction",
+  "updates": "Stable116 manager-controlled higher-version update; update-disabled internals require one manual official enrollment; no immediate/silent guarantee."
+}
