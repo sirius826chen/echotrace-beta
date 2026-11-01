@@ -1,3 +1,7 @@
+# EchoTrace0.1.1.8 source and rights / 來源與權利
+
+Owner-accepted dev.3 is promoted by version/channel/header changes only. The existing source, license, artwork and upstream notices below remain applicable. No new license grant or official Ingress affiliation is asserted.
+
 # EchoTrace 0.1.1.7 source and rights
 
 Original EchoTrace code remains under its applicable khresist MIT notice. Existing third-party polygon-clipping/splaytree/Microsoft-helper and official Ingress artwork/trademark notices remain intact; those assets are not relicensed by this release.

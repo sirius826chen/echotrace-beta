@@ -1,3 +1,32 @@
+# EchoTrace 0.1.1.8 stable
+
+2026-11-01. Promotes owner-accepted0.1.1.8-dev.3 with identical functionality; only release version, channel and update/install metadata change.
+
+[Install stable](https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.user.js) · [Release](https://github.com/sirius826chen/echotrace-beta/releases/tag/v0.1.1.8) · [繁體中文](README-zh-TW.md) · [Cumulative changelog](CHANGELOG-en.md)
+
+## Installation and updates
+
+Existing stable0.1.1.7 users with manager update checks enabled can receive0.1.1.8 on their next manager check or trigger a check manually. Timing and confirmation depend on manager preferences; immediate or unattended installation is not promised. Update-disabled internal builds such as dev.3 require ONE manual installation of stable, then reload IITC, to join the stable feed. Replace the same identity; do not install a duplicate or clear data. Retained activity, saved preferences/language/Auto and workspaces stay intact. Activity backups exclude settings and archive-task files; save those separately as needed. [Update metadata](https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.meta.js). Use within your signed-in IITC session.
+
+## Complete changes since stable0.1.1.7
+
+- **Record downloads:** normal successful-page limit rises500→1000, default100/minimum1. This is a plugin task cap, not guaranteed complete server history. Start/retry independently pauses live observation and automatic acquisition; completion/cancel/failure restores each original choice and fixed observation time while retaining explicit changes made during the job. Clear date/option errors preserve input and the previous task. Pause/Continue keeps the same job/cursor; Retry original job preserves scope, RAW/errors and cumulative limits. Ordinary hidden/idle waits consume no network retries.
+- **Automatic file batches:** page or size threshold saves a file and continues, default100 successful pages or20MiB. Enable/pages/destination are common controls; size and occasional tools are collapsed under Advanced settings. Total-task cap is separate, default1000 in bulk; explicit larger values or0=until start are supported without resetting at rotation/retry. Folder outputs are read back and hashed. Browser-download fallback requires explicit saved-copy confirmation; two pending files pause further requests, and isolated spool has a64MiB serialized budget plus browser quota limits. Storage failures retain available data; save an uncommitted tail before closing. Visible explicit bulk may pass ordinary mouse-idle, but hiding/sleep/closed browsers do not promise continued capture.
+- **Recovery and status:** reload sends no automatic archive request. Resumable tasks alone appear in interrupted-download recovery: select/load, then Continue downloading with an explicit loaded state. Completed pending files have a separate entry. Running tasks in this/another tab cannot be resumed through that UI. Required errors/re-export/confirmation remain accessible; the file list is an index, not a full log backup. State/rows/pages/period/file status are distinct, diagnostics collapsed, and progress never invents percentages.
+- **Follow, camera and reading:** Follow controls track the effective bottom-right map corner, accounting for visible sidebar/native controls and resize. Follow isolates the target, uses eligible interactions/directed-Link origin, excludes destruction/CF object positions and ignores older backfill for camera movement. Ordinary Portal/event/Link clicks open/select/highlight without extra camera movement; only explicit Center/follow centers and never zooms out an already closer view. Player event ID/offset/expansion/focus preserve reading position.
+- **Portal and Profile:** hover presents actual Portal name, available loaded-cache basics, then COMM without extra detail requests or historical-state guesses. An explicit current-player In-game Profile link safely encodes the ID. Device app launching depends on installation/OS association and is not a mobile launch-test claim.
+- **Counts and readability:** Portal time-range participants and latest-marker overlap groups have different scopes and may correctly differ; distinct counts remain conservative. Compact RES/counts use existing blue and ENL/counts existing green, including zero, with neutral separators.0° labels sit above painted pin heads without geographic displacement. Existing IITC styling,15px body/14px secondary controls, narrow reflow and browser zoom remain. Current interval displays actual acquisition tier separately from editable start tier. Purple/yellow black-edged interaction dashes and original blue/green actual Link lines/arrows are preserved.
+- **Data management:** Backup and restore holds all currently retained activity across map periods; import merges with existing records. Settings/archive tasks are separate. Clean up data separates expired-only pruning from all-activity clearing with original previews/confirmation. Collapsed Advanced tools exports historical capture raw responses, a separate format not accepted by the activity-backup importer.
+
+## Validation and limits
+
+Exact source and complete assembled runtime equivalence permits only the documented release identity/version/header changes. [Checks summary](CHECKS-public.json) lists freshly executed promotion checks; dev.3's476 checks and18 independent checks are inherited acceptance evidence, not all claimed freshly rerun. A fresh isolated manager demonstrates117→118 checking/downloading/confirmed replacement with recorded localhost URL adapters; production header and public bytes are separately checked.
+
+COMM activity is not GPS. Inference remains experimental/default-off, without new precision, complete-history, mobile, Windows system-scaling or field-stress claims. Full development source/tests/evidence stay private; public distribution contains the intentionally public installer, metadata, reader documents/licenses and sanitized receipts. Historical releases/candidates remain immutable. [Source and rights](SOURCE-PROVENANCE.md).
+
+
+---
+
 # 0.1.1.7 cumulative changes from official 0.1.1.6
 
 ## dev.1: evidence, stable reading and historical acquisition

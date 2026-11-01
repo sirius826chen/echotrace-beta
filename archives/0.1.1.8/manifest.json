@@ -1,0 +1,15 @@
+{
+  "product": "EchoTrace by khresist",
+  "version": "0.1.1.8",
+  "channel": "stable",
+  "ownerApproved": true,
+  "acceptedVersion": "0.1.1.8-dev.3",
+  "installerSha256": "987a3e1bd20cbf0718581003536ed17182473fb57bbae6783520964aa9be13f8",
+  "metadataSha256": "d5d82b671bbd4a6aaf2f442f445340f9006df725b9b3f0dced15c5fc413612f6",
+  "updateURL": "https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.meta.js",
+  "downloadURL": "https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.user.js",
+  "releaseTag": "v0.1.1.8",
+  "freshChecks": 150,
+  "normalizedRuntimeEquivalence": true,
+  "updateGuidance": "Existing stable117: manager-controlled next check; update-disabled internal users: one manual formal install; no immediate/unattended guarantee."
+}

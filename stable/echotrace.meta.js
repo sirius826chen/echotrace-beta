@@ -2,7 +2,7 @@
 // @id             player-tracker-chatgpt@local
 // @name           EchoTrace by khresist
 // @namespace      iitc.plugin.playerTrackerChatGPT
-// @version        0.1.1.7
+// @version        0.1.1.8
 // @updateURL      https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.meta.js
 // @downloadURL    https://raw.githubusercontent.com/sirius826chen/echotrace-beta/main/stable/echotrace.user.js
 // @description    Standalone public COMM activity tracker with player views, paths, storage and CSV.
